@@ -178,7 +178,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
   <div class="toolbar">
     <input id="fileFilter" placeholder="Filter by file..." />
     <input id="paramFilter" placeholder="Filter by parameter..." />
-    <button id="clearFilters" title="Clear filters">$(clear-all)</button>
+    <button id="clearFilters" title="Clear filters">Clear</button>
   </div>
   <table id="table">
     <thead>
