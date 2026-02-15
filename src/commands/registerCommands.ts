@@ -12,10 +12,16 @@ type MaybeNodeArg = NodeArg | vscode.Uri | undefined;
 export function registerCommands(
     context: vscode.ExtensionContext,
     providers: { devProvider: DevProvider; scenarioProvider: ScenarioProvider },
-    callbacks: { refreshToolkit: () => void; saveWorkspace: () => void; loadWorkspace: () => void; resetWorkspace: () => void }
+    callbacks: {
+        refreshToolkit: () => void;
+        saveWorkspace: () => void;
+        loadWorkspace: () => void;
+        resetWorkspace: () => void;
+        openConfigInspector: (uri: vscode.Uri) => void;
+    }
 ): void {
     const { devProvider, scenarioProvider } = providers;
-    const { refreshToolkit, saveWorkspace, loadWorkspace, resetWorkspace } = callbacks;
+    const { refreshToolkit, saveWorkspace, loadWorkspace, resetWorkspace, openConfigInspector } = callbacks;
 
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.openFile, openFile),
@@ -66,6 +72,7 @@ export function registerCommands(
             scenarioProvider.setFilter(filter ?? '');
         }),
         vscode.commands.registerCommand(COMMANDS.toggleScenarioSort, () => scenarioProvider.toggleScenarioSortMode()),
+        vscode.commands.registerCommand(COMMANDS.openConfigInspector, (node: WithUri) => openConfigInspector(node.uri)),
         vscode.commands.registerCommand(COMMANDS.toggleRunSort, (arg: MaybeNodeArg) => {
             const node = asNodeArg(arg);
             if (node) {

@@ -2,9 +2,11 @@
 export const CONFIG_ROOT = 'scenarioToolkit';
 
 export const VIEW_IDS = {
+    toolkitContainer: 'toolkit',
     devArea: 'devArea',
     srcExplorer: 'srcExplorer',
-    scenarioExplorer: 'scenarioExplorer'
+    scenarioExplorer: 'scenarioExplorer',
+    configInspector: 'configInspector'
 } as const;
 
 export const COMMANDS = {
@@ -30,6 +32,7 @@ export const COMMANDS = {
     filterScenario: 'scenario.filter',
     toggleScenarioSort: 'scenario.toggleSort',
     toggleRunSort: 'scenario.toggleRunSort',
+    openConfigInspector: 'scenario.openConfigInspector',
     refreshToolkit: 'scenario.refresh',
     saveWorkspace: 'workspace.save',
     loadWorkspace: 'workspace.load',

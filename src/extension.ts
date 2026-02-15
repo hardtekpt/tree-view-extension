@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { getScenarioPath, getSourcePath } from './config';
 import { VIEW_IDS } from './constants';
 import { registerCommands } from './commands/registerCommands';
+import { ConfigInspectorProvider } from './configInspector/configInspectorProvider';
 import { DevProvider } from './providers/devProvider';
 import { ScenarioProvider } from './providers/scenarioProvider';
 import { SrcProvider } from './providers/srcProvider';
@@ -13,6 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const devProvider = new DevProvider();
     const srcProvider = new SrcProvider();
     const scenarioProvider = new ScenarioProvider(context.workspaceState);
+    const configInspectorProvider = new ConfigInspectorProvider(context);
     const srcExpanded = new Set<string>();
     const scenarioExpanded = new Set<string>();
 
@@ -75,7 +77,13 @@ export function activate(context: vscode.ExtensionContext): void {
         applyTreeViewState
     );
 
-    context.subscriptions.push(devTree, srcTree, scenarioTree, scenarioProvider);
+    context.subscriptions.push(
+        devTree,
+        srcTree,
+        scenarioTree,
+        scenarioProvider,
+        vscode.window.registerWebviewViewProvider(VIEW_IDS.configInspector, configInspectorProvider)
+    );
 
     const watcherState = createWatchers(srcProvider.refresh.bind(srcProvider), scenarioProvider.refresh.bind(scenarioProvider));
     watcherState.attach(context);
@@ -90,7 +98,10 @@ export function activate(context: vscode.ExtensionContext): void {
         refreshToolkit,
         saveWorkspace: () => workspaceManager.save(),
         loadWorkspace: () => workspaceManager.load(),
-        resetWorkspace: () => workspaceManager.reset()
+        resetWorkspace: () => workspaceManager.reset(),
+        openConfigInspector: uri => {
+            void configInspectorProvider.openForConfigsFolder(uri);
+        }
     });
 
     context.subscriptions.push(

@@ -458,7 +458,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 children.push(
                     new ScenarioNode(
                         vscode.Uri.file(configsPath),
-                        'folder',
+                        'configsFolder',
                         vscode.TreeItemCollapsibleState.Collapsed,
                         'configs',
                         false,
@@ -610,7 +610,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         if (baseName === 'configs') {
             return new ScenarioNode(
                 vscode.Uri.file(fsPath),
-                'folder',
+                'configsFolder',
                 vscode.TreeItemCollapsibleState.Collapsed,
                 'configs',
                 false,

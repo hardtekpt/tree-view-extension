@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { COMMANDS } from '../constants';
 
 // Node types used by the scenario explorer tree.
-export type ScenarioNodeType = 'scenario' | 'folder' | 'ioFolder' | 'ioRun' | 'file' | 'status';
+export type ScenarioNodeType = 'scenario' | 'configsFolder' | 'folder' | 'ioFolder' | 'ioRun' | 'file' | 'status';
 export type ScenarioRunSortMode = 'name' | 'recent';
 
 // Tree item model shared across scenario folders, runs, and files.

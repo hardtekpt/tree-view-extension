@@ -21,7 +21,8 @@
    "toolkit":[
     {"id":"devArea","name":"Development Area","collapsed":true},
     {"id":"srcExplorer","name":"Source Explorer"},
-    {"id":"scenarioExplorer","name":"Scenarios"}
+    {"id":"scenarioExplorer","name":"Scenarios"},
+    {"id":"configInspector","name":"Config Inspector","type":"webview"}
    ]
   },
   "commands":[
@@ -45,6 +46,7 @@
    {"command":"scenario.filter","title":"Filter","icon":"$(filter)"},
    {"command":"scenario.toggleSort","title":"Toggle Scenario Sort","icon":"$(list-ordered)"},
    {"command":"scenario.toggleRunSort","title":"Toggle Run Sort","icon":"$(history)"},
+   {"command":"scenario.openConfigInspector","title":"Open Config Inspector","icon":"$(symbol-property)"},
    {"command":"scenario.refresh","title":"Refresh Toolkit","icon":"$(refresh)"},
    {"command":"scenario.toggleDev","title":"ToggleDev","icon":"$(plus)"},
    {"command":"workspace.save","title":"Save Workspace","icon":"$(save)"},
@@ -95,8 +97,10 @@
 
     {"command":"run.filterByTag","when":"view==scenarioExplorer && viewItem==ioFolder","group":"inline"},
     {"command":"scenario.toggleRunSort","when":"view==scenarioExplorer && viewItem==ioFolder","group":"inline"},
+    {"command":"scenario.openConfigInspector","when":"view==scenarioExplorer && viewItem==configsFolder","group":"inline"},
     {"command":"run.filterByTag","when":"view==scenarioExplorer && viewItem==ioFolder","group":"actions@1"},
     {"command":"scenario.toggleRunSort","when":"view==scenarioExplorer && viewItem==ioFolder","group":"actions@2"},
+    {"command":"scenario.openConfigInspector","when":"view==scenarioExplorer && viewItem==configsFolder","group":"actions@1"},
    {"command":"scenario.toggleDev","when":"view==srcExplorer && viewItem==file","group":"inline"},
    {"command":"scenario.toggleDev","when":"view==srcExplorer && viewItem==file","group":"actions@1"},
    {"command":"dev.remove","when":"view==devArea && viewItem==devFile","group":"inline"},
@@ -108,9 +112,13 @@
   }
  },
  "scripts":{"compile":"tsc -p ./"},
+ "dependencies":{
+  "fast-xml-parser":"^4.5.0"
+ },
  "devDependencies":{
   "typescript":"^5",
   "@types/vscode":"^1.85.0",
-  "@types/node":"^18"
+  "@types/node":"^18",
+  "@types/mocha":"^10.0.10"
  }
 }
