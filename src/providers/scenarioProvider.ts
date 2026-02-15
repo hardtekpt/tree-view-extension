@@ -392,6 +392,24 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         return element;
     }
 
+    getParent(element: ScenarioNode): ScenarioNode | undefined {
+        if (element.type === 'scenario') {
+            return undefined;
+        }
+
+        const scenariosRoot = getScenarioPath();
+        if (!scenariosRoot) {
+            return undefined;
+        }
+
+        const parentPath = path.dirname(element.uri.fsPath);
+        if (parentPath === element.uri.fsPath || parentPath === scenariosRoot) {
+            return undefined;
+        }
+
+        return this.nodeFromPath(parentPath);
+    }
+
     getChildren(element?: ScenarioNode): ScenarioNode[] {
         // Root level shows scenario directories.
         const scenariosRoot = getScenarioPath();
@@ -541,6 +559,79 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
     }
 
+    nodeFromPath(fsPath: string): ScenarioNode | undefined {
+        const scenariosRoot = getScenarioPath();
+        if (!scenariosRoot) {
+            return undefined;
+        }
+
+        if (!existsDir(fsPath)) {
+            return undefined;
+        }
+
+        const normalizedRoot = toPathKey(scenariosRoot);
+        const normalizedPath = toPathKey(fsPath);
+        if (!normalizedPath.startsWith(`${normalizedRoot}${path.sep}`)) {
+            return undefined;
+        }
+
+        const parentPath = path.dirname(fsPath);
+        if (toPathKey(parentPath) === normalizedRoot) {
+            const isPinned = this.pinnedScenarios.has(normalizedPath);
+            const runSortMode = this.runSortByScenario.get(normalizedPath) ?? 'name';
+            return new ScenarioNode(
+                vscode.Uri.file(fsPath),
+                'scenario',
+                vscode.TreeItemCollapsibleState.Collapsed,
+                undefined,
+                isPinned,
+                fsPath,
+                runSortMode
+            );
+        }
+
+        const scenarioRootPath = this.findScenarioRoot(fsPath, scenariosRoot);
+        if (!scenarioRootPath) {
+            return undefined;
+        }
+
+        const baseName = path.basename(fsPath).toLowerCase();
+        if (baseName === 'io') {
+            return new ScenarioNode(
+                vscode.Uri.file(fsPath),
+                'ioFolder',
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'io',
+                false,
+                scenarioRootPath
+            );
+        }
+
+        if (baseName === 'configs') {
+            return new ScenarioNode(
+                vscode.Uri.file(fsPath),
+                'folder',
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'configs',
+                false,
+                scenarioRootPath
+            );
+        }
+
+        const ioPath = path.join(scenarioRootPath, 'io');
+        const isInsideIo = toPathKey(fsPath).startsWith(`${toPathKey(ioPath)}${path.sep}`);
+        const isPinnedRun = isInsideIo ? this.pinnedIoRuns.has(normalizedPath) : false;
+
+        return new ScenarioNode(
+            vscode.Uri.file(fsPath),
+            isInsideIo ? 'ioRun' : 'folder',
+            vscode.TreeItemCollapsibleState.Collapsed,
+            undefined,
+            isPinnedRun,
+            scenarioRootPath
+        );
+    }
+
     run(uri: vscode.Uri): void {
         const basePath = getBasePath();
         if (!basePath || !existsDir(basePath)) {
@@ -602,7 +693,72 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return;
         }
 
-        fs.renameSync(uri.fsPath, target);
+        try {
+            await renamePathWithFallback(uri.fsPath, target);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Could not rename scenario: ${message}`);
+            return;
+        }
+
+        const previousKey = toPathKey(uri.fsPath);
+        const nextKey = toPathKey(target);
+
+        if (this.pinnedScenarios.delete(previousKey)) {
+            this.pinnedScenarios.add(nextKey);
+            void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
+        }
+
+        if (this.runSortByScenario.has(previousKey)) {
+            const value = this.runSortByScenario.get(previousKey);
+            this.runSortByScenario.delete(previousKey);
+            if (value) {
+                this.runSortByScenario.set(nextKey, value);
+            }
+            void this.state.update(
+                SCENARIO_STORAGE_KEYS.runSortByScenario,
+                Object.fromEntries(this.runSortByScenario.entries())
+            );
+        }
+
+        if (this.runFilterTagIdsByScenario.has(previousKey)) {
+            const value = this.runFilterTagIdsByScenario.get(previousKey);
+            this.runFilterTagIdsByScenario.delete(previousKey);
+            if (value && value.length > 0) {
+                this.runFilterTagIdsByScenario.set(nextKey, value);
+            }
+            void this.state.update(
+                SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
+                Object.fromEntries(this.runFilterTagIdsByScenario.entries())
+            );
+        }
+
+        let pinnedRunsChanged = false;
+        for (const runKey of [...this.pinnedIoRuns]) {
+            if (runKey.startsWith(`${previousKey}${path.sep}`)) {
+                const suffix = runKey.slice(previousKey.length);
+                this.pinnedIoRuns.delete(runKey);
+                this.pinnedIoRuns.add(`${nextKey}${suffix}`);
+                pinnedRunsChanged = true;
+            }
+        }
+        if (pinnedRunsChanged) {
+            void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
+        }
+
+        let runTagsChanged = false;
+        for (const [runKey, tagIds] of [...this.runTagsByPath.entries()]) {
+            if (runKey.startsWith(`${previousKey}${path.sep}`)) {
+                const suffix = runKey.slice(previousKey.length);
+                this.runTagsByPath.delete(runKey);
+                this.runTagsByPath.set(`${nextKey}${suffix}`, tagIds);
+                runTagsChanged = true;
+            }
+        }
+        if (runTagsChanged) {
+            void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        }
+
         this.refresh();
     }
 
@@ -810,6 +966,24 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         return filterTagIds.some(tagId => runTags.includes(tagId));
     }
 
+    private findScenarioRoot(fsPath: string, scenariosRoot: string): string | undefined {
+        let current = path.resolve(fsPath);
+        const rootKey = toPathKey(scenariosRoot);
+
+        while (true) {
+            const parent = path.dirname(current);
+            if (parent === current) {
+                return undefined;
+            }
+
+            if (toPathKey(parent) === rootKey) {
+                return current;
+            }
+
+            current = parent;
+        }
+    }
+
     private persistTagState(): void {
         void this.state.update(SCENARIO_STORAGE_KEYS.tagCatalog, [...this.tagCatalog.values()]);
         void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
@@ -897,5 +1071,44 @@ function getMtimeMs(filePath: string): number {
     } catch {
         return 0;
     }
+}
+
+async function renamePathWithFallback(sourcePath: string, targetPath: string): Promise<void> {
+    // Windows can transiently lock directories (watchers/indexers), so retry first.
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            fs.renameSync(sourcePath, targetPath);
+            return;
+        } catch (error) {
+            const code = getErrorCode(error);
+            if ((code !== 'EPERM' && code !== 'EBUSY') || attempt === maxAttempts) {
+                break;
+            }
+            await delay(120 * attempt);
+        }
+    }
+
+    // Final fallback for locked directory rename: copy then remove source.
+    if (existsDir(sourcePath)) {
+        fs.cpSync(sourcePath, targetPath, { recursive: true });
+        fs.rmSync(sourcePath, { recursive: true, force: true });
+        return;
+    }
+
+    // For files, bubble original rename behavior.
+    fs.renameSync(sourcePath, targetPath);
+}
+
+function getErrorCode(error: unknown): string | undefined {
+    if (typeof error === 'object' && error && 'code' in error) {
+        const value = (error as { code?: unknown }).code;
+        return typeof value === 'string' ? value : undefined;
+    }
+    return undefined;
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 

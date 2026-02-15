@@ -17,6 +17,24 @@ export class SrcProvider implements vscode.TreeDataProvider<SrcNode> {
         return element;
     }
 
+    getParent(element: SrcNode): SrcNode | undefined {
+        const sourceRoot = getSourcePath();
+        if (!sourceRoot) {
+            return undefined;
+        }
+
+        const parentPath = path.dirname(element.uri.fsPath);
+        if (parentPath === element.uri.fsPath || parentPath === sourceRoot) {
+            return undefined;
+        }
+
+        if (!existsDir(parentPath)) {
+            return undefined;
+        }
+
+        return new SrcNode(vscode.Uri.file(parentPath));
+    }
+
     getChildren(element?: SrcNode): SrcNode[] {
         const root = element?.uri.fsPath ?? getSourcePath();
         if (!root || !existsDir(root)) {
@@ -24,5 +42,13 @@ export class SrcProvider implements vscode.TreeDataProvider<SrcNode> {
         }
 
         return listEntriesSorted(root).map(name => new SrcNode(vscode.Uri.file(path.join(root, name))));
+    }
+
+    nodeFromPath(fsPath: string): SrcNode | undefined {
+        if (!existsDir(fsPath)) {
+            return undefined;
+        }
+
+        return new SrcNode(vscode.Uri.file(fsPath));
     }
 }

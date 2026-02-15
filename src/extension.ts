@@ -6,13 +6,15 @@ import { DevProvider } from './providers/devProvider';
 import { ScenarioProvider } from './providers/scenarioProvider';
 import { SrcProvider } from './providers/srcProvider';
 import { WorkspaceManager } from './workspace/workspaceManager';
+import { TreeViewWorkspaceState } from './workspace/treeViewState';
 
 // Extension entrypoint: compose providers, views, commands, and watchers.
 export function activate(context: vscode.ExtensionContext): void {
     const devProvider = new DevProvider();
     const srcProvider = new SrcProvider();
     const scenarioProvider = new ScenarioProvider(context.workspaceState);
-    const workspaceManager = new WorkspaceManager(devProvider, scenarioProvider);
+    const srcExpanded = new Set<string>();
+    const scenarioExpanded = new Set<string>();
 
     const devTree = vscode.window.createTreeView(VIEW_IDS.devArea, {
         treeDataProvider: devProvider,
@@ -29,6 +31,49 @@ export function activate(context: vscode.ExtensionContext): void {
         treeDataProvider: scenarioProvider,
         showCollapseAll: true
     });
+
+    context.subscriptions.push(
+        srcTree.onDidExpandElement(event => srcExpanded.add(event.element.uri.fsPath)),
+        srcTree.onDidCollapseElement(event => srcExpanded.delete(event.element.uri.fsPath)),
+        scenarioTree.onDidExpandElement(event => scenarioExpanded.add(event.element.uri.fsPath)),
+        scenarioTree.onDidCollapseElement(event => scenarioExpanded.delete(event.element.uri.fsPath))
+    );
+
+    const getTreeViewState = (): TreeViewWorkspaceState => ({
+        srcExplorerExpanded: [...srcExpanded],
+        scenarioExplorerExpanded: [...scenarioExpanded]
+    });
+
+    const applyTreeViewState = async (state: TreeViewWorkspaceState): Promise<void> => {
+        srcExpanded.clear();
+        scenarioExpanded.clear();
+        for (const item of state.srcExplorerExpanded ?? []) {
+            srcExpanded.add(item);
+        }
+        for (const item of state.scenarioExplorerExpanded ?? []) {
+            scenarioExpanded.add(item);
+        }
+
+        // Normalize UI before replaying expansion state.
+        try {
+            await vscode.commands.executeCommand('workbench.actions.treeView.srcExplorer.collapseAll');
+        } catch {}
+        try {
+            await vscode.commands.executeCommand('workbench.actions.treeView.scenarioExplorer.collapseAll');
+        } catch {}
+
+        await revealExpandedPaths(srcTree, [...srcExpanded], pathValue => srcProvider.nodeFromPath(pathValue));
+        await revealExpandedPaths(scenarioTree, [...scenarioExpanded], pathValue =>
+            scenarioProvider.nodeFromPath(pathValue)
+        );
+    };
+
+    const workspaceManager = new WorkspaceManager(
+        devProvider,
+        scenarioProvider,
+        getTreeViewState,
+        applyTreeViewState
+    );
 
     context.subscriptions.push(devTree, srcTree, scenarioTree, scenarioProvider);
 
@@ -107,4 +152,23 @@ function createWatchers(refreshSrc: RefreshFunction, refreshScenarios: RefreshFu
             context.subscriptions.push({ dispose: disposeAll });
         }
     };
+}
+
+async function revealExpandedPaths<T>(
+    treeView: vscode.TreeView<T>,
+    paths: string[],
+    resolveNode: (fsPath: string) => T | undefined
+): Promise<void> {
+    const sorted = [...paths].sort((a, b) => a.length - b.length);
+    for (const fsPath of sorted) {
+        const node = resolveNode(fsPath);
+        if (!node) {
+            continue;
+        }
+        try {
+            await treeView.reveal(node, { expand: true, focus: false, select: false });
+        } catch {
+            // Ignore nodes that no longer exist.
+        }
+    }
 }
