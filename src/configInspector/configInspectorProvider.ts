@@ -6,7 +6,10 @@ import { applyXmlParameterUpdates, extractXmlParameters, readXmlFile, XmlParamet
 
 type IncomingMessage =
     | { type: 'ready' }
-    | { type: 'update'; id: string; value: string };
+    | { type: 'update'; id: string; value: string }
+    | { type: 'togglePin'; id: string };
+
+const PINNED_CONFIG_PARAMETERS_KEY = 'scenarioToolkit.pinnedConfigParameters';
 
 // Webview shown in the sidebar for editing XML configs in a human-readable table.
 export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
@@ -14,8 +17,14 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
     private configsFolder?: vscode.Uri;
     private watcher?: vscode.FileSystemWatcher;
     private ignoreFsEventsUntil = 0;
+    private readonly pinnedParameterIds = new Set<string>();
 
-    constructor(private readonly context: vscode.ExtensionContext) {}
+    constructor(private readonly context: vscode.ExtensionContext) {
+        const saved = context.workspaceState.get<string[]>(PINNED_CONFIG_PARAMETERS_KEY, []);
+        for (const id of saved) {
+            this.pinnedParameterIds.add(id);
+        }
+    }
 
     resolveWebviewView(view: vscode.WebviewView): void {
         this.view = view;
@@ -28,6 +37,10 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
             }
             if (message.type === 'update') {
                 void this.saveUpdates([{ id: message.id, value: message.value }]);
+                return;
+            }
+            if (message.type === 'togglePin') {
+                this.toggleParameterPin(message.id);
             }
         });
     }
@@ -67,11 +80,14 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
         if (!this.view) {
             return;
         }
-        const payload = this.loadRows();
+        const payload: ConfigInspectorPayload = {
+            ...this.loadRows(),
+            pinnedIds: [...this.pinnedParameterIds]
+        };
         await this.view.webview.postMessage(payload);
     }
 
-    private loadRows(): { folderName?: string; rows: XmlParameter[]; message?: string } {
+    private loadRows(): Omit<ConfigInspectorPayload, 'pinnedIds'> {
         if (!this.configsFolder) {
             return { rows: [], message: 'Select a scenario configs folder to start editing XML parameters.' };
         }
@@ -96,6 +112,16 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
             rows,
             message: rows.length === 0 ? 'No editable XML parameters found in this folder.' : undefined
         };
+    }
+
+    private toggleParameterPin(id: string): void {
+        if (this.pinnedParameterIds.has(id)) {
+            this.pinnedParameterIds.delete(id);
+        } else {
+            this.pinnedParameterIds.add(id);
+        }
+        void this.context.workspaceState.update(PINNED_CONFIG_PARAMETERS_KEY, [...this.pinnedParameterIds]);
+        void this.postState();
     }
 
     private async saveUpdates(updates: Array<{ id: string; value: string }>): Promise<void> {
@@ -170,6 +196,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
     th, td { border-bottom: 1px solid var(--vscode-editorWidget-border); text-align: left; padding: 6px 4px; }
     input { width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 4px; }
     .muted { opacity: .8; margin-bottom: 8px; }
+    .pin-btn { background: transparent; border: none; cursor: pointer; color: inherit; padding: 0 4px; }
   </style>
 </head>
 <body>
@@ -183,6 +210,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
   <table id="table">
     <thead>
       <tr>
+        <th></th>
         <th>File</th>
         <th>Parameter</th>
         <th>Value</th>
@@ -198,10 +226,11 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
     const fileFilter = document.getElementById('fileFilter');
     const paramFilter = document.getElementById('paramFilter');
     const clearFilters = document.getElementById('clearFilters');
-    const state = { rows: [] };
+    const state = { rows: [], pinnedIds: new Set() };
 
     function render(payload) {
       state.rows = payload.rows || [];
+      state.pinnedIds = new Set(payload.pinnedIds || []);
       meta.textContent = payload.folderName ? 'Editing: ' + payload.folderName : '';
       message.textContent = payload.message || '';
       renderRows();
@@ -211,7 +240,20 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
       const fileTerm = (fileFilter.value || '').trim().toLowerCase();
       const paramTerm = (paramFilter.value || '').trim().toLowerCase();
       tbody.innerHTML = '';
-      for (const row of state.rows) {
+      const sortedRows = [...state.rows].sort((a, b) => {
+        const aPinned = state.pinnedIds.has(a.id);
+        const bPinned = state.pinnedIds.has(b.id);
+        if (aPinned !== bPinned) {
+          return aPinned ? -1 : 1;
+        }
+        const fileCmp = a.fileName.localeCompare(b.fileName);
+        if (fileCmp !== 0) {
+          return fileCmp;
+        }
+        return a.parameterPath.localeCompare(b.parameterPath);
+      });
+
+      for (const row of sortedRows) {
         if (fileTerm && !row.fileName.toLowerCase().includes(fileTerm)) {
           continue;
         }
@@ -219,7 +261,8 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
           continue;
         }
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + escapeHtml(row.fileName) + '</td><td>' + escapeHtml(row.parameterPath) + '</td>';
+        const pin = state.pinnedIds.has(row.id) ? '📌' : '📍';
+        tr.innerHTML = '<td><button class="pin-btn" data-id="' + escapeHtml(row.id) + '" title="Toggle pin">' + pin + '</button></td><td>' + escapeHtml(row.fileName) + '</td><td>' + escapeHtml(row.parameterPath) + '</td>';
         const td = document.createElement('td');
         const input = document.createElement('input');
         input.value = row.value;
@@ -262,6 +305,18 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
       timer = setTimeout(flush, 200);
     });
 
+    document.addEventListener('click', event => {
+      const target = event.target;
+      if (!target || !target.classList || !target.classList.contains('pin-btn')) {
+        return;
+      }
+      const id = target.dataset.id;
+      if (!id) {
+        return;
+      }
+      vscode.postMessage({ type: 'togglePin', id });
+    });
+
     clearFilters.addEventListener('click', () => {
       fileFilter.value = '';
       paramFilter.value = '';
@@ -289,6 +344,13 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
 
         return false;
     }
+}
+
+interface ConfigInspectorPayload {
+    folderName?: string;
+    rows: XmlParameter[];
+    message?: string;
+    pinnedIds: string[];
 }
 
 function delay(ms: number): Promise<void> {
