@@ -1,0 +1,116 @@
+{
+ "name":"scenario-toolkit",
+ "displayName":"Scenario Toolkit",
+ "enabledApiProposals":["contribViewContainerTitle"],
+ "version":"0.0.2",
+ "engines":{"vscode":"^1.85.0"},
+ "main":"./out/extension.js",
+ "activationEvents":["*"],
+  "contributes":{
+  "configuration":{
+   "properties":{
+    "scenarioToolkit.basePath":{"type":"string","default":"","description":"Root containing src and scenarios"},
+    "scenarioToolkit.pythonCommand":{"type":"string","default":"python","description":"Python command used to run scenarios (example: python, py, python3)"},
+    "scenarioToolkit.runScript":{"type":"string","default":"run.py","description":"Script (relative to basePath) used for running a scenario"}
+   }
+  },
+  "viewsContainers":{
+   "activitybar":[{"id":"toolkit","title":"Toolkit","icon":"resources/icon.svg"}]
+  },
+  "views":{
+   "toolkit":[
+    {"id":"devArea","name":"Development Area","collapsed":true},
+    {"id":"srcExplorer","name":"Source Explorer"},
+    {"id":"scenarioExplorer","name":"Scenarios"}
+   ]
+  },
+  "commands":[
+   {"command":"scenario.run","title":"Run","icon":"$(play)"},
+   {"command":"scenario.dup","title":"Duplicate","icon":"$(copy)"},
+   {"command":"scenario.rename","title":"Rename","icon":"$(edit)"},
+   {"command":"scenario.del","title":"Delete","icon":"$(trash)"},
+   {"command":"run.rename","title":"Rename Output Run","icon":"$(edit)"},
+   {"command":"run.del","title":"Delete Output Run","icon":"$(trash)"},
+   {"command":"run.openLog","title":"Open Output Log","icon":"$(output)"},
+   {"command":"run.tags","title":"Set Run Tags","icon":"$(tag)"},
+   {"command":"run.clearTags","title":"Clear Run Tags","icon":"$(clear-all)"},
+   {"command":"run.applySuccessTag","title":"Tag as success","icon":"$(check)"},
+   {"command":"run.applyFailedTag","title":"Tag as failed","icon":"$(error)"},
+   {"command":"tags.manage","title":"Manage Tags","icon":"$(tag)"},
+   {"command":"tags.create","title":"Create Tag","icon":"$(add)"},
+   {"command":"tags.edit","title":"Edit Tag","icon":"$(edit)"},
+   {"command":"tags.delete","title":"Delete Tag","icon":"$(trash)"},
+   {"command":"run.filterByTag","title":"Filter Runs By Tag","icon":"$(filter)"},
+   {"command":"scenario.pin","title":"Pin/Unpin","icon":"$(pin)"},
+   {"command":"scenario.filter","title":"Filter","icon":"$(filter)"},
+   {"command":"scenario.toggleSort","title":"Toggle Scenario Sort","icon":"$(list-ordered)"},
+   {"command":"scenario.toggleRunSort","title":"Toggle Run Sort","icon":"$(history)"},
+   {"command":"scenario.refresh","title":"Refresh Toolkit","icon":"$(refresh)"},
+   {"command":"scenario.toggleDev","title":"ToggleDev","icon":"$(plus)"},
+   {"command":"workspace.save","title":"Save Workspace","icon":"$(save)"},
+   {"command":"workspace.load","title":"Load Workspace","icon":"$(folder-opened)"},
+   {"command":"workspace.reset","title":"Reset Workspace","icon":"$(discard)"},
+   {"command":"dev.clear","title":"Clear Development Area","icon":"$(clear-all)"},
+   {"command":"dev.remove","title":"Remove From Development Area","icon":"$(close)"}
+  ],
+  "menus":{
+   "viewContainer/title":[
+    {"command":"workspace.save","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@1"},
+    {"command":"workspace.load","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@2"},
+    {"command":"scenario.refresh","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@3"},
+    {"command":"workspace.reset","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@4"}
+   ],
+   "view/title":[
+    {"command":"scenario.filter","when":"view==scenarioExplorer","group":"navigation"},
+    {"command":"scenario.toggleSort","when":"view==scenarioExplorer","group":"navigation"},
+    {"command":"tags.manage","when":"view==scenarioExplorer","group":"navigation"},
+    {"command":"dev.clear","when":"view==devArea","group":"navigation"}
+   ],
+   "view/item/context":[
+    {"command":"scenario.del","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@1"},
+    {"command":"scenario.rename","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@2"},
+    {"command":"scenario.dup","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@3"},
+    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@5"},
+    {"command":"scenario.run","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@6"},
+
+    {"command":"scenario.del","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@1"},
+    {"command":"scenario.rename","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@2"},
+    {"command":"scenario.dup","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@3"},
+    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@4"},
+    {"command":"scenario.run","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@5"},
+
+    {"command":"run.del","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@1"},
+    {"command":"run.rename","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@2"},
+    {"command":"run.openLog","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@3"},
+    {"command":"run.tags","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@4"},
+    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@5"},
+
+    {"command":"run.del","when":"view==scenarioExplorer && viewItem==ioRun","group":"actions@1"},
+    {"command":"run.rename","when":"view==scenarioExplorer && viewItem==ioRun","group":"actions@2"},
+    {"command":"run.openLog","when":"view==scenarioExplorer && viewItem==ioRun","group":"actions@3"},
+    {"command":"run.tags","when":"view==scenarioExplorer && viewItem==ioRun","group":"actions@4"},
+    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==ioRun","group":"actions@5"},
+    {"command":"run.applySuccessTag","when":"view==scenarioExplorer && viewItem==ioRun","group":"tags@1"},
+    {"command":"run.applyFailedTag","when":"view==scenarioExplorer && viewItem==ioRun","group":"tags@2"},
+
+    {"command":"run.filterByTag","when":"view==scenarioExplorer && viewItem==ioFolder","group":"inline"},
+    {"command":"scenario.toggleRunSort","when":"view==scenarioExplorer && viewItem==ioFolder","group":"inline"},
+    {"command":"run.filterByTag","when":"view==scenarioExplorer && viewItem==ioFolder","group":"actions@1"},
+    {"command":"scenario.toggleRunSort","when":"view==scenarioExplorer && viewItem==ioFolder","group":"actions@2"},
+   {"command":"scenario.toggleDev","when":"view==srcExplorer && viewItem==file","group":"inline"},
+   {"command":"scenario.toggleDev","when":"view==srcExplorer && viewItem==file","group":"actions@1"},
+   {"command":"dev.remove","when":"view==devArea && viewItem==devFile","group":"inline"},
+   {"command":"dev.remove","when":"view==devArea && viewItem==devFile","group":"actions@1"}
+   ]
+  },
+  "configurationDefaults":{
+   "workbench.list.showActionsOnHover":false
+  }
+ },
+ "scripts":{"compile":"tsc -p ./"},
+ "devDependencies":{
+  "typescript":"^5",
+  "@types/vscode":"^1.85.0",
+  "@types/node":"^18"
+ }
+}

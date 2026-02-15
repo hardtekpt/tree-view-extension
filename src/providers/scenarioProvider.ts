@@ -1,0 +1,901 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { spawn } from 'child_process';
+import * as vscode from 'vscode';
+import { getBasePath, getPythonCommand, getRunScript, getScenarioPath } from '../config';
+import { ScenarioNode } from '../nodes/scenarioNode';
+import { existsDir, uniquePath, listEntriesSorted } from '../utils/fileSystem';
+import { toPathKey } from '../utils/pathKey';
+import { SCENARIO_STORAGE_KEYS } from './scenario/storageKeys';
+import { createTagId, formatTagChip, normalizeColor, normalizeTag } from './scenario/tagUtils';
+import { RunTagDefinition, ScenarioRunSortMode, ScenarioWorkspaceState, SortMode } from './scenario/types';
+
+// Main provider for scenarios, run outputs, and run tagging workflows.
+export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
+    private readonly changeEmitter = new vscode.EventEmitter<void>();
+    readonly onDidChangeTreeData = this.changeEmitter.event;
+
+    private filter = '';
+    private readonly output = vscode.window.createOutputChannel('Scenario Toolkit');
+    private readonly pinnedScenarios = new Set<string>();
+    private readonly pinnedIoRuns = new Set<string>();
+    private scenarioSortMode: SortMode = 'name';
+    private readonly runSortByScenario = new Map<string, ScenarioRunSortMode>();
+    private readonly tagCatalog = new Map<string, RunTagDefinition>();
+    private readonly runTagsByPath = new Map<string, string[]>();
+    private readonly runFilterTagIdsByScenario = new Map<string, string[]>();
+
+    constructor(private readonly state: vscode.Memento) {
+        this.loadState();
+        this.ensureDefaultTags();
+    }
+
+    refresh(): void {
+        this.changeEmitter.fire();
+    }
+
+    dispose(): void {
+        this.output.dispose();
+    }
+
+    setFilter(value: string): void {
+        this.filter = value.trim().toLowerCase();
+        this.refresh();
+    }
+
+    getWorkspaceState(): ScenarioWorkspaceState {
+        // Serialize provider state into the single workspace configuration snapshot.
+        return {
+            filter: this.filter,
+            scenarioSortMode: this.scenarioSortMode,
+            pinnedScenarios: [...this.pinnedScenarios],
+            pinnedIoRuns: [...this.pinnedIoRuns],
+            runSortByScenario: Object.fromEntries(this.runSortByScenario.entries()),
+            tagCatalog: [...this.tagCatalog.values()],
+            runTagsByPath: Object.fromEntries(this.runTagsByPath.entries()),
+            runFilterTagIdsByScenario: Object.fromEntries(this.runFilterTagIdsByScenario.entries())
+        };
+    }
+
+    applyWorkspaceState(next: ScenarioWorkspaceState): void {
+        // Rehydrate all provider state from persisted workspace configuration.
+        this.filter = next.filter ?? '';
+        this.scenarioSortMode = next.scenarioSortMode ?? 'name';
+        this.pinnedScenarios.clear();
+        for (const item of next.pinnedScenarios ?? []) {
+            this.pinnedScenarios.add(toPathKey(item));
+        }
+        this.pinnedIoRuns.clear();
+        for (const item of next.pinnedIoRuns ?? []) {
+            this.pinnedIoRuns.add(toPathKey(item));
+        }
+
+        this.runSortByScenario.clear();
+        for (const [key, mode] of Object.entries(next.runSortByScenario ?? {})) {
+            this.runSortByScenario.set(toPathKey(key), mode);
+        }
+        this.tagCatalog.clear();
+        for (const tag of next.tagCatalog ?? []) {
+            if (!tag?.id || !tag.label) {
+                continue;
+            }
+            this.tagCatalog.set(tag.id, normalizeTag(tag));
+        }
+
+        this.runTagsByPath.clear();
+        for (const [runPath, tagIds] of Object.entries(next.runTagsByPath ?? {})) {
+            const filteredIds = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
+            if (filteredIds.length > 0) {
+                this.runTagsByPath.set(toPathKey(runPath), filteredIds);
+            }
+        }
+
+        this.runFilterTagIdsByScenario.clear();
+        for (const [scenarioPath, tagIds] of Object.entries(next.runFilterTagIdsByScenario ?? {})) {
+            const filteredIds = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
+            if (filteredIds.length > 0) {
+                this.runFilterTagIdsByScenario.set(toPathKey(scenarioPath), filteredIds);
+            }
+        }
+
+        void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
+        void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
+        void this.state.update(SCENARIO_STORAGE_KEYS.scenarioSort, this.scenarioSortMode);
+        void this.state.update(
+            SCENARIO_STORAGE_KEYS.runSortByScenario,
+            Object.fromEntries(this.runSortByScenario.entries())
+        );
+        void this.state.update(SCENARIO_STORAGE_KEYS.tagCatalog, [...this.tagCatalog.values()]);
+        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        void this.state.update(
+            SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
+            Object.fromEntries(this.runFilterTagIdsByScenario.entries())
+        );
+        this.refresh();
+    }
+
+    toggleScenarioPin(target: { uri: vscode.Uri; type?: string }): void {
+        const type = target.type;
+        const uri = target.uri;
+        const key = toPathKey(uri.fsPath);
+
+        if (type === 'ioRun') {
+            if (this.pinnedIoRuns.has(key)) {
+                this.pinnedIoRuns.delete(key);
+            } else {
+                this.pinnedIoRuns.add(key);
+            }
+            void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
+        } else {
+            if (this.pinnedScenarios.has(key)) {
+                this.pinnedScenarios.delete(key);
+            } else {
+                this.pinnedScenarios.add(key);
+            }
+            void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
+        }
+
+        this.refresh();
+    }
+
+    toggleScenarioSortMode(): void {
+        this.scenarioSortMode = this.scenarioSortMode === 'name' ? 'recent' : 'name';
+        void this.state.update(SCENARIO_STORAGE_KEYS.scenarioSort, this.scenarioSortMode);
+        void vscode.window.showInformationMessage(
+            `Scenario sort: ${this.scenarioSortMode === 'name' ? 'Name' : 'Most recent'}`
+        );
+        this.refresh();
+    }
+
+    toggleRunSortModeForScenario(target: { uri: vscode.Uri; scenarioRootPath?: string }): void {
+        const rootPath = target.scenarioRootPath ?? target.uri.fsPath;
+        const key = toPathKey(rootPath);
+        const current = this.runSortByScenario.get(key) ?? 'name';
+        const next: ScenarioRunSortMode = current === 'name' ? 'recent' : 'name';
+
+        this.runSortByScenario.set(key, next);
+        void this.state.update(
+            SCENARIO_STORAGE_KEYS.runSortByScenario,
+            Object.fromEntries(this.runSortByScenario.entries())
+        );
+        void vscode.window.showInformationMessage(
+            `${path.basename(rootPath)} run sort: ${next === 'name' ? 'Name' : 'Most recent'}`
+        );
+        this.refresh();
+    }
+
+    async manageRunTags(target: { uri: vscode.Uri }): Promise<void> {
+        const runKey = toPathKey(target.uri.fsPath);
+        const tags = [...this.tagCatalog.values()];
+        if (tags.length === 0) {
+            void vscode.window.showInformationMessage('No tags defined. Create tags first.');
+            return;
+        }
+
+        const current = new Set(this.runTagsByPath.get(runKey) ?? []);
+        const picked = await vscode.window.showQuickPick(
+            tags.map(tag => ({
+                label: tag.label,
+                description: `${tag.icon ? `$(${tag.icon}) ` : ''}${tag.color}`,
+                picked: current.has(tag.id),
+                tagId: tag.id
+            })),
+            {
+                canPickMany: true,
+                placeHolder: 'Select tags for this output run'
+            }
+        );
+
+        if (!picked) {
+            return;
+        }
+
+        const next = picked.map(item => item.tagId);
+        if (next.length === 0) {
+            this.runTagsByPath.delete(runKey);
+        } else {
+            this.runTagsByPath.set(runKey, next);
+        }
+        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        this.refresh();
+    }
+
+    clearRunTags(target: { uri: vscode.Uri }): void {
+        this.runTagsByPath.delete(toPathKey(target.uri.fsPath));
+        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        this.refresh();
+    }
+
+    applyStaticTag(target: { uri: vscode.Uri }, tagLabel: 'success' | 'failed'): void {
+        const tag = this.getOrCreateDefaultTag(tagLabel);
+        if (!tag) {
+            return;
+        }
+
+        const runKey = toPathKey(target.uri.fsPath);
+        const current = new Set(this.runTagsByPath.get(runKey) ?? []);
+        if (current.has(tag.id)) {
+            current.delete(tag.id);
+        } else {
+            current.add(tag.id);
+        }
+
+        const next = [...current];
+        if (next.length === 0) {
+            this.runTagsByPath.delete(runKey);
+        } else {
+            this.runTagsByPath.set(runKey, next);
+        }
+
+        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        this.refresh();
+    }
+
+    async manageTagCatalog(): Promise<void> {
+        const choice = await vscode.window.showQuickPick(
+            [
+                { label: 'Create Tag', value: 'create' },
+                { label: 'Edit Tag', value: 'edit' },
+                { label: 'Delete Tag', value: 'delete' }
+            ],
+            { placeHolder: 'Manage tag catalog' }
+        );
+
+        if (!choice) {
+            return;
+        }
+
+        if (choice.value === 'create') {
+            await this.createTag();
+            return;
+        }
+
+        if (choice.value === 'edit') {
+            await this.editTag();
+            return;
+        }
+
+        await this.deleteTag();
+    }
+
+    async createTag(): Promise<void> {
+        const label = (await vscode.window.showInputBox({ prompt: 'Tag label' }))?.trim();
+        if (!label) {
+            return;
+        }
+
+        const id = createTagId(label, this.tagCatalog);
+        const color = normalizeColor((await vscode.window.showInputBox({
+            prompt: 'Tag color (hex, optional)',
+            value: '#4CAF50'
+        })) ?? '#4CAF50');
+        const icon = ((await vscode.window.showInputBox({
+            prompt: 'Codicon name (optional)',
+            placeHolder: 'bookmark'
+        })) ?? '').trim();
+
+        this.tagCatalog.set(id, normalizeTag({ id, label, color, icon: icon || undefined }));
+        this.persistTagState();
+        this.refresh();
+    }
+
+    async editTag(): Promise<void> {
+        const selected = await this.pickTag('Select a tag to edit');
+        if (!selected) {
+            return;
+        }
+
+        const tag = this.tagCatalog.get(selected.id);
+        if (!tag) {
+            return;
+        }
+
+        const label = (await vscode.window.showInputBox({
+            prompt: 'Tag label',
+            value: tag.label
+        }))?.trim();
+
+        if (!label) {
+            return;
+        }
+
+        const color = normalizeColor((await vscode.window.showInputBox({
+            prompt: 'Tag color',
+            value: tag.color
+        })) ?? tag.color);
+        const icon = ((await vscode.window.showInputBox({
+            prompt: 'Codicon name (optional)',
+            value: tag.icon ?? ''
+        })) ?? '').trim();
+
+        this.tagCatalog.set(tag.id, normalizeTag({ ...tag, label, color, icon: icon || undefined }));
+        this.persistTagState();
+        this.refresh();
+    }
+
+    async deleteTag(): Promise<void> {
+        const selected = await this.pickTag('Select a tag to delete');
+        if (!selected) {
+            return;
+        }
+
+        const confirmation = await vscode.window.showWarningMessage(
+            `Delete tag '${selected.label}'? It will be removed from all runs.`,
+            { modal: true },
+            'Delete'
+        );
+
+        if (confirmation !== 'Delete') {
+            return;
+        }
+
+        this.tagCatalog.delete(selected.id);
+        for (const [runKey, tagIds] of this.runTagsByPath.entries()) {
+            const filtered = tagIds.filter(tagId => tagId !== selected.id);
+            if (filtered.length === 0) {
+                this.runTagsByPath.delete(runKey);
+            } else {
+                this.runTagsByPath.set(runKey, filtered);
+            }
+        }
+        for (const [scenarioKey, tagIds] of this.runFilterTagIdsByScenario.entries()) {
+            const filtered = tagIds.filter(tagId => tagId !== selected.id);
+            if (filtered.length === 0) {
+                this.runFilterTagIdsByScenario.delete(scenarioKey);
+            } else {
+                this.runFilterTagIdsByScenario.set(scenarioKey, filtered);
+            }
+        }
+        this.persistTagState();
+        this.refresh();
+    }
+
+    async filterRunsByTags(target: { uri: vscode.Uri; scenarioRootPath?: string }): Promise<void> {
+        if (this.tagCatalog.size === 0) {
+            void vscode.window.showInformationMessage('No tags defined.');
+            return;
+        }
+
+        const scenarioKey = toPathKey(target.scenarioRootPath ?? target.uri.fsPath);
+        const currentFilter = this.runFilterTagIdsByScenario.get(scenarioKey) ?? [];
+        const picked = await vscode.window.showQuickPick(
+            [...this.tagCatalog.values()].map(tag => ({
+                label: tag.label,
+                description: `${tag.icon ? `$(${tag.icon}) ` : ''}${tag.color}`,
+                picked: currentFilter.includes(tag.id),
+                tagId: tag.id
+            })),
+            {
+                canPickMany: true,
+                placeHolder: 'Filter runs by tags (empty selection clears filter)'
+            }
+        );
+
+        if (!picked) {
+            return;
+        }
+
+        const next = picked.map(item => item.tagId);
+        if (next.length === 0) {
+            this.runFilterTagIdsByScenario.delete(scenarioKey);
+        } else {
+            this.runFilterTagIdsByScenario.set(scenarioKey, next);
+        }
+        void this.state.update(
+            SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
+            Object.fromEntries(this.runFilterTagIdsByScenario.entries())
+        );
+        this.refresh();
+    }
+
+    getTreeItem(element: ScenarioNode): vscode.TreeItem {
+        return element;
+    }
+
+    getChildren(element?: ScenarioNode): ScenarioNode[] {
+        // Root level shows scenario directories.
+        const scenariosRoot = getScenarioPath();
+        if (!scenariosRoot || !existsDir(scenariosRoot)) {
+            return [];
+        }
+
+        if (!element) {
+            // Scenario list with search filter + pin priority.
+            return this.sortEntries(
+                scenariosRoot,
+                listEntriesSorted(scenariosRoot).filter(name => name.toLowerCase().includes(this.filter)),
+                this.scenarioSortMode
+            )
+                .map(name => path.join(scenariosRoot, name))
+                .filter(full => existsDir(full))
+                .map(full => {
+                    const normalized = toPathKey(full);
+                    const isPinned = this.pinnedScenarios.has(normalized);
+                    const runSortMode = this.runSortByScenario.get(normalized) ?? 'name';
+                    return new ScenarioNode(
+                        vscode.Uri.file(full),
+                        'scenario',
+                        vscode.TreeItemCollapsibleState.Collapsed,
+                        undefined,
+                        isPinned,
+                        full,
+                        runSortMode
+                    );
+                })
+                .sort((a, b) => {
+                    if (a.isPinned !== b.isPinned) {
+                        return a.isPinned ? -1 : 1;
+                    }
+                    return 0;
+                });
+        }
+
+        if (element.type === 'scenario') {
+            // Scenario node expands into logical top-level folders.
+            const configsPath = path.join(element.uri.fsPath, 'configs');
+            const ioPath = path.join(element.uri.fsPath, 'io');
+            const children: ScenarioNode[] = [];
+
+            if (existsDir(configsPath)) {
+                children.push(
+                    new ScenarioNode(
+                        vscode.Uri.file(configsPath),
+                        'folder',
+                        vscode.TreeItemCollapsibleState.Collapsed,
+                        'configs',
+                        false,
+                        element.scenarioRootPath ?? element.uri.fsPath
+                    )
+                );
+            }
+
+            if (existsDir(ioPath)) {
+                children.push(
+                    new ScenarioNode(
+                        vscode.Uri.file(ioPath),
+                        'ioFolder',
+                        vscode.TreeItemCollapsibleState.Collapsed,
+                        'io',
+                        false,
+                        element.scenarioRootPath ?? element.uri.fsPath
+                    )
+                );
+            }
+
+            if (children.length === 0) {
+                children.push(
+                    new ScenarioNode(
+                        element.uri,
+                        'status',
+                        vscode.TreeItemCollapsibleState.None,
+                        'No configs/io folder found',
+                        false,
+                        element.scenarioRootPath ?? element.uri.fsPath
+                    )
+                );
+            }
+
+            return children;
+        }
+
+        if (!existsDir(element.uri.fsPath)) {
+            return [];
+        }
+
+        const names =
+            path.basename(element.uri.fsPath).toLowerCase() === 'io'
+                ? this.sortEntries(
+                    element.uri.fsPath,
+                    fs.readdirSync(element.uri.fsPath),
+                    this.runSortByScenario.get(
+                        toPathKey(element.scenarioRootPath ?? element.uri.fsPath)
+                    ) ?? 'name',
+                    false
+                )
+                : listEntriesSorted(element.uri.fsPath);
+        // io-folder children get extra metadata (tags, pin, per-scenario filtering).
+        const isIoFolder = element.type === 'ioFolder';
+        const nodes = names.map(name => {
+            const full = path.join(element.uri.fsPath, name);
+            const isDir = existsDir(full);
+            const key = toPathKey(full);
+            const isPinned = isIoFolder ? this.pinnedIoRuns.has(key) : false;
+            const node = new ScenarioNode(
+                vscode.Uri.file(full),
+                isIoFolder ? 'ioRun' : isDir ? 'folder' : 'file',
+                isDir ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+                undefined,
+                isPinned,
+                element.scenarioRootPath
+            );
+
+            if (isIoFolder) {
+                const tagIds = this.runTagsByPath.get(key) ?? [];
+                const tags = tagIds
+                    .map(tagId => this.tagCatalog.get(tagId))
+                    .filter((tag): tag is RunTagDefinition => Boolean(tag));
+
+                if (tags.length > 0) {
+                    node.description = tags.map(tag => formatTagChip(tag)).join(' ');
+                    node.tooltip = tags
+                        .map(tag => `${tag.label} (${tag.color}${tag.icon ? `, ${tag.icon}` : ''})`)
+                        .join('\n');
+                }
+            }
+
+            return node;
+        });
+
+        if (!isIoFolder) {
+            return nodes;
+        }
+
+        const scenarioKey = toPathKey(element.scenarioRootPath ?? element.uri.fsPath);
+        const filtered = nodes.filter(node => this.matchRunTagFilter(toPathKey(node.uri.fsPath), scenarioKey));
+        return filtered.sort((a, b) => {
+            if (a.isPinned !== b.isPinned) {
+                return a.isPinned ? -1 : 1;
+            }
+
+            return 0;
+        });
+    }
+
+    run(uri: vscode.Uri): void {
+        const basePath = getBasePath();
+        if (!basePath || !existsDir(basePath)) {
+            void vscode.window.showWarningMessage('Set scenarioToolkit.basePath to a valid folder before running.');
+            return;
+        }
+
+        const python = getPythonCommand();
+        const runScript = getRunScript();
+        const args = [runScript, uri.fsPath];
+        const command = `${python} ${args.map(quoteIfNeeded).join(' ')}`;
+
+        this.output.appendLine(`[run] ${command}`);
+
+        const child = spawn(python, args, { cwd: basePath });
+        child.stdout.on('data', chunk => this.output.append(String(chunk)));
+        child.stderr.on('data', chunk => this.output.append(String(chunk)));
+        child.on('error', error => {
+            this.output.appendLine(`[error] ${error.message}`);
+            void vscode.window.showErrorMessage(`Scenario run failed: ${error.message}`);
+        });
+        child.on('close', code => {
+            this.output.appendLine(`[exit] code=${code ?? 'unknown'}`);
+            this.output.show(true);
+            if (code !== 0) {
+                void vscode.window.showWarningMessage(`Scenario process exited with code ${code ?? 'unknown'}.`);
+            }
+        });
+    }
+
+    duplicate(uri: vscode.Uri): void {
+        const destination = uniquePath(`${uri.fsPath}_copy`);
+        fs.cpSync(uri.fsPath, destination, { recursive: true });
+
+        // Keep duplicated scenarios clean by clearing inherited run outputs.
+        const duplicatedIoPath = path.join(destination, 'io');
+        if (fs.existsSync(duplicatedIoPath)) {
+            fs.rmSync(duplicatedIoPath, { recursive: true, force: true });
+            fs.mkdirSync(duplicatedIoPath, { recursive: true });
+        }
+        this.refresh();
+    }
+
+    async rename(uri: vscode.Uri): Promise<void> {
+        const currentName = path.basename(uri.fsPath);
+        const enteredName = await vscode.window.showInputBox({
+            value: currentName,
+            prompt: 'New scenario name'
+        });
+
+        const nextName = enteredName?.trim();
+        if (!nextName || nextName === currentName) {
+            return;
+        }
+
+        const target = path.join(path.dirname(uri.fsPath), nextName);
+        if (fs.existsSync(target)) {
+            void vscode.window.showErrorMessage(`Cannot rename. '${nextName}' already exists.`);
+            return;
+        }
+
+        fs.renameSync(uri.fsPath, target);
+        this.refresh();
+    }
+
+    async delete(uri: vscode.Uri): Promise<void> {
+        const scenarioName = path.basename(uri.fsPath);
+        const confirmation = await vscode.window.showWarningMessage(
+            `Delete scenario '${scenarioName}'?`,
+            { modal: true },
+            'Delete'
+        );
+
+        if (confirmation !== 'Delete') {
+            return;
+        }
+
+        fs.rmSync(uri.fsPath, { recursive: true, force: true });
+        const key = toPathKey(uri.fsPath);
+        this.pinnedScenarios.delete(key);
+        this.runSortByScenario.delete(key);
+        for (const runKey of [...this.pinnedIoRuns]) {
+            if (runKey === key || runKey.startsWith(`${key}${path.sep}`)) {
+                this.pinnedIoRuns.delete(runKey);
+            }
+        }
+        for (const runKey of [...this.runTagsByPath.keys()]) {
+            if (runKey === key || runKey.startsWith(`${key}${path.sep}`)) {
+                this.runTagsByPath.delete(runKey);
+            }
+        }
+        void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
+        void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
+        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        void this.state.update(
+            SCENARIO_STORAGE_KEYS.runSortByScenario,
+            Object.fromEntries(this.runSortByScenario.entries())
+        );
+        this.refresh();
+    }
+
+    async renameIoRun(uri: vscode.Uri): Promise<void> {
+        const currentName = path.basename(uri.fsPath);
+        const enteredName = await vscode.window.showInputBox({
+            value: currentName,
+            prompt: 'New output run name'
+        });
+
+        const nextName = enteredName?.trim();
+        if (!nextName || nextName === currentName) {
+            return;
+        }
+
+        const target = path.join(path.dirname(uri.fsPath), nextName);
+        if (fs.existsSync(target)) {
+            void vscode.window.showErrorMessage(`Cannot rename. '${nextName}' already exists.`);
+            return;
+        }
+
+        fs.renameSync(uri.fsPath, target);
+        const prevKey = toPathKey(uri.fsPath);
+        const nextKey = toPathKey(target);
+        if (this.pinnedIoRuns.has(prevKey)) {
+            this.pinnedIoRuns.delete(prevKey);
+            this.pinnedIoRuns.add(nextKey);
+            void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
+        }
+
+        const tags = this.runTagsByPath.get(prevKey);
+        if (tags) {
+            this.runTagsByPath.delete(prevKey);
+            this.runTagsByPath.set(nextKey, tags);
+            void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        }
+        this.refresh();
+    }
+
+    async deleteIoRun(uri: vscode.Uri): Promise<void> {
+        const runName = path.basename(uri.fsPath);
+        const confirmation = await vscode.window.showWarningMessage(
+            `Delete output run '${runName}'?`,
+            { modal: true },
+            'Delete'
+        );
+
+        if (confirmation !== 'Delete') {
+            return;
+        }
+
+        fs.rmSync(uri.fsPath, { recursive: true, force: true });
+        const key = toPathKey(uri.fsPath);
+        this.pinnedIoRuns.delete(key);
+        this.runTagsByPath.delete(key);
+        void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
+        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        this.refresh();
+    }
+
+    async openIoRunLog(uri: vscode.Uri): Promise<void> {
+        if (!existsDir(uri.fsPath)) {
+            void vscode.window.showWarningMessage('Selected output run is not a folder.');
+            return;
+        }
+
+        const entries = fs
+            .readdirSync(uri.fsPath)
+            .filter(name => name.toLowerCase().endsWith('.log'))
+            .map(name => path.join(uri.fsPath, name));
+
+        if (entries.length === 0) {
+            void vscode.window.showWarningMessage(`No .log file found in '${path.basename(uri.fsPath)}'.`);
+            return;
+        }
+
+        if (entries.length === 1) {
+            await vscode.window.showTextDocument(vscode.Uri.file(entries[0]));
+            return;
+        }
+
+        const picked = await vscode.window.showQuickPick(entries.map(file => path.basename(file)), {
+            placeHolder: 'Select a log file to open'
+        });
+
+        if (!picked) {
+            return;
+        }
+
+        await vscode.window.showTextDocument(vscode.Uri.file(path.join(uri.fsPath, picked)));
+    }
+
+    private loadState(): void {
+        const pinned = this.state.get<string[]>(SCENARIO_STORAGE_KEYS.pinnedScenarios, []);
+        for (const item of pinned) {
+            this.pinnedScenarios.add(toPathKey(item));
+        }
+        const pinnedRuns = this.state.get<string[]>(SCENARIO_STORAGE_KEYS.pinnedIoRuns, []);
+        for (const item of pinnedRuns) {
+            this.pinnedIoRuns.add(toPathKey(item));
+        }
+        const catalog = this.state.get<RunTagDefinition[]>(SCENARIO_STORAGE_KEYS.tagCatalog, []);
+        for (const tag of catalog) {
+            if (!tag?.id || !tag.label) {
+                continue;
+            }
+            this.tagCatalog.set(tag.id, normalizeTag(tag));
+        }
+        const runTags = this.state.get<Record<string, string[]>>(SCENARIO_STORAGE_KEYS.runTagsByPath, {});
+        for (const [runPath, tagIds] of Object.entries(runTags)) {
+            const ids = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
+            if (ids.length > 0) {
+                this.runTagsByPath.set(toPathKey(runPath), ids);
+            }
+        }
+        const filterByScenario = this.state.get<Record<string, string[]>>(
+            SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
+            {}
+        );
+        for (const [scenarioPath, tagIds] of Object.entries(filterByScenario)) {
+            const filteredIds = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
+            if (filteredIds.length > 0) {
+                this.runFilterTagIdsByScenario.set(toPathKey(scenarioPath), filteredIds);
+            }
+        }
+
+        this.scenarioSortMode = this.state.get<SortMode>(SCENARIO_STORAGE_KEYS.scenarioSort, 'name');
+        const byScenario = this.state.get<Record<string, ScenarioRunSortMode>>(
+            SCENARIO_STORAGE_KEYS.runSortByScenario,
+            {}
+        );
+        for (const [key, mode] of Object.entries(byScenario)) {
+            this.runSortByScenario.set(toPathKey(key), mode);
+        }
+    }
+
+    private sortEntries(root: string, names: string[], mode: SortMode, directoriesFirst = true): string[] {
+        const sorted = [...names].sort((a, b) => {
+            const aPath = path.join(root, a);
+            const bPath = path.join(root, b);
+            const aDir = existsDir(aPath);
+            const bDir = existsDir(bPath);
+
+            if (directoriesFirst && aDir !== bDir) {
+                return aDir ? -1 : 1;
+            }
+
+            if (mode === 'recent') {
+                const bTime = getMtimeMs(bPath);
+                const aTime = getMtimeMs(aPath);
+                if (aTime !== bTime) {
+                    return bTime - aTime;
+                }
+            }
+
+            return a.localeCompare(b, undefined, { sensitivity: 'base' });
+        });
+
+        return sorted;
+    }
+
+    private matchRunTagFilter(runKey: string, scenarioKey: string): boolean {
+        const filterTagIds = this.runFilterTagIdsByScenario.get(scenarioKey) ?? [];
+        if (filterTagIds.length === 0) {
+            return true;
+        }
+
+        const runTags = this.runTagsByPath.get(runKey) ?? [];
+        return filterTagIds.some(tagId => runTags.includes(tagId));
+    }
+
+    private persistTagState(): void {
+        void this.state.update(SCENARIO_STORAGE_KEYS.tagCatalog, [...this.tagCatalog.values()]);
+        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
+        void this.state.update(
+            SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
+            Object.fromEntries(this.runFilterTagIdsByScenario.entries())
+        );
+    }
+
+    private async pickTag(placeHolder: string): Promise<RunTagDefinition | undefined> {
+        const tags = [...this.tagCatalog.values()];
+        if (tags.length === 0) {
+            void vscode.window.showInformationMessage('No tags available.');
+            return undefined;
+        }
+
+        const picked = await vscode.window.showQuickPick(
+            tags.map(tag => ({
+                label: tag.label,
+                description: `${tag.icon ? `$(${tag.icon}) ` : ''}${tag.color}`,
+                id: tag.id
+            })),
+            { placeHolder }
+        );
+
+        if (!picked) {
+            return undefined;
+        }
+
+        return this.tagCatalog.get(picked.id);
+    }
+
+    private ensureDefaultTags(): void {
+        const defaults: Array<Omit<RunTagDefinition, 'id'>> = [
+            { label: 'success', color: '#4CAF50', icon: 'check' },
+            { label: 'failed', color: '#F44336', icon: 'error' },
+            { label: 'reviewed', color: '#2196F3', icon: 'eye' }
+        ];
+
+        let changed = false;
+        for (const definition of defaults) {
+            const exists = [...this.tagCatalog.values()].some(
+                tag => tag.label.toLowerCase() === definition.label.toLowerCase()
+            );
+            if (exists) {
+                continue;
+            }
+
+            const id = createTagId(definition.label, this.tagCatalog);
+            this.tagCatalog.set(id, normalizeTag({ id, ...definition }));
+            changed = true;
+        }
+
+        if (changed) {
+            this.persistTagState();
+        }
+    }
+
+    private getOrCreateDefaultTag(tagLabel: 'success' | 'failed'): RunTagDefinition | undefined {
+        const existing = [...this.tagCatalog.values()].find(tag => tag.label.toLowerCase() === tagLabel);
+        if (existing) {
+            return existing;
+        }
+
+        const definition =
+            tagLabel === 'success'
+                ? { label: 'success', color: '#4CAF50', icon: 'check' }
+                : { label: 'failed', color: '#F44336', icon: 'error' };
+
+        const id = createTagId(definition.label, this.tagCatalog);
+        const tag = normalizeTag({ id, ...definition });
+        this.tagCatalog.set(id, tag);
+        this.persistTagState();
+        return tag;
+    }
+}
+
+function quoteIfNeeded(value: string): string {
+    return /\s/.test(value) ? `"${value}"` : value;
+}
+
+function getMtimeMs(filePath: string): number {
+    try {
+        return fs.statSync(filePath).mtimeMs;
+    } catch {
+        return 0;
+    }
+}
+
