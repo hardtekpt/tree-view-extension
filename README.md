@@ -55,6 +55,51 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 4. Press `F5` to launch the Extension Host.
 5. In the Extension Host, set `scenarioToolkit.basePath`.
 
+## Packaging (.vsix)
+
+### 1. Prerequisites
+
+1. Set a real publisher in `package.json` (do not keep `undefined_publisher`).
+2. Ensure `package.json` keeps:
+   - `"enabledApiProposals": ["contribViewContainerTitle"]`
+3. Build:
+   - `npm install`
+   - `npm run compile`
+
+### 2. Create the package
+
+1. Install VS Code packaging tool (once):
+   - `npm i -D @vscode/vsce`
+2. Create `.vsix`:
+   - `npx @vscode/vsce package`
+
+### 3. Install the package locally
+
+1. In VS Code:
+   - `Extensions: Install from VSIX...`
+2. Select the generated `.vsix` file.
+
+## True Toolbar (View Container Title) Notes
+
+This extension uses the real container toolbar (`menus.viewContainer/title`), which depends on proposed API.
+
+### Development Host
+
+- Works in Extension Development Host (`F5`) when:
+  - `enabledApiProposals` includes `contribViewContainerTitle`.
+
+### Packaged/normal VS Code window
+
+- To use the true toolbar outside dev host, launch VS Code with:
+  - `--enable-proposed-api <publisher>.<name>`
+- Example:
+  - `code --enable-proposed-api mypublisher.scenario-toolkit`
+
+### Important constraints
+
+- The `when` clause for `viewContainer/title` contributions must satisfy VS Code validation requirements in your target version.
+- Without proposed API enabled, toolbar actions may not appear at container level (or may fallback to regular view actions depending on version/validation behavior).
+
 ## Refactored Architecture
 
 - `src/extension.ts`: activation and composition.
