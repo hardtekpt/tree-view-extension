@@ -1,7 +1,6 @@
 {
  "name":"scenario-toolkit",
  "displayName":"Scenario Toolkit",
- "enabledApiProposals":["contribViewContainerTitle"],
  "version":"0.0.2",
  "engines":{"vscode":"^1.85.0"},
  "main":"./out/extension.js",
@@ -59,13 +58,11 @@
    {"command":"dev.remove","title":"Remove From Development Area","icon":"$(close)"}
   ],
   "menus":{
-   "viewContainer/title":[
-    {"command":"workspace.save","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@1"},
-    {"command":"workspace.load","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@2"},
-    {"command":"scenario.refresh","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@3"},
-    {"command":"workspace.reset","when":"viewContainer == toolkit || viewContainer == workbench.view.extension.toolkit || viewContainer == workbench.view.debug","group":"navigation@4"}
-   ],
    "view/title":[
+    {"command":"workspace.save","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@1"},
+    {"command":"workspace.load","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@2"},
+    {"command":"scenario.refresh","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@3"},
+    {"command":"workspace.reset","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@4"},
     {"command":"scenario.filter","when":"view==scenarioExplorer","group":"navigation"},
     {"command":"scenario.toggleSort","when":"view==scenarioExplorer","group":"navigation"},
     {"command":"scenario.setGlobalRunFlags","when":"view==scenarioExplorer","group":"navigation"},

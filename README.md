@@ -60,9 +60,7 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 ### 1. Prerequisites
 
 1. Set a real publisher in `package.json` (do not keep `undefined_publisher`).
-2. Ensure `package.json` keeps:
-   - `"enabledApiProposals": ["contribViewContainerTitle"]`
-3. Build:
+2. Build:
    - `npm install`
    - `npm run compile`
 
@@ -79,26 +77,17 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
    - `Extensions: Install from VSIX...`
 2. Select the generated `.vsix` file.
 
-## True Toolbar (View Container Title) Notes
+## Toolbar Behavior (No Proposed API)
 
-This extension uses the real container toolbar (`menus.viewContainer/title`), which depends on proposed API.
+The extension now uses only stable VS Code menu contributions (`menus.view/title`).
 
-### Development Host
-
-- Works in Extension Development Host (`F5`) when:
-  - `enabledApiProposals` includes `contribViewContainerTitle`.
-
-### Packaged/normal VS Code window
-
-- To use the true toolbar outside dev host, launch VS Code with:
-  - `--enable-proposed-api <publisher>.<name>`
-- Example:
-  - `code --enable-proposed-api mypublisher.scenario-toolkit`
-
-### Important constraints
-
-- The `when` clause for `viewContainer/title` contributions must satisfy VS Code validation requirements in your target version.
-- Without proposed API enabled, toolbar actions may not appear at container level (or may fallback to regular view actions depending on version/validation behavior).
+- Workspace actions (Save, Load, Refresh, Reset) are available in each Toolkit view title:
+  - Development Area
+  - Source Explorer
+  - Scenarios
+  - Config Inspector
+- This works in both development (`F5`) and packaged `.vsix` installs.
+- No `--enable-proposed-api` launch flag is required.
 
 ## Refactored Architecture
 
@@ -122,4 +111,4 @@ This extension uses the real container toolbar (`menus.viewContainer/title`), wh
 ## Notes
 
 - Tree item descriptions cannot render arbitrary rich components, so run tags are text-based chips.
-- View-container title actions rely on VS Code proposed API behavior in development mode.
+- Item inline icons are preserved and continue to work as before.
