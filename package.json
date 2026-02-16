@@ -18,6 +18,7 @@
   },
   "views":{
    "toolkit":[
+    {"id":"manageWorkspace","name":"Manage Workspace"},
     {"id":"devArea","name":"Development Area","collapsed":true},
     {"id":"srcExplorer","name":"Source Explorer"},
     {"id":"scenarioExplorer","name":"Scenarios"},
@@ -59,10 +60,10 @@
   ],
   "menus":{
    "view/title":[
-    {"command":"workspace.save","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@1"},
-    {"command":"workspace.load","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@2"},
-    {"command":"scenario.refresh","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@3"},
-    {"command":"workspace.reset","when":"view==scenarioExplorer || view==srcExplorer || view==devArea || view==configInspector","group":"navigation@4"},
+    {"command":"workspace.save","when":"view==manageWorkspace","group":"navigation@1"},
+    {"command":"workspace.load","when":"view==manageWorkspace","group":"navigation@2"},
+    {"command":"scenario.refresh","when":"view==manageWorkspace","group":"navigation@3"},
+    {"command":"workspace.reset","when":"view==manageWorkspace","group":"navigation@4"},
     {"command":"scenario.filter","when":"view==scenarioExplorer","group":"navigation"},
     {"command":"scenario.toggleSort","when":"view==scenarioExplorer","group":"navigation"},
     {"command":"scenario.setGlobalRunFlags","when":"view==scenarioExplorer","group":"navigation"},

@@ -6,6 +6,7 @@ import { ConfigInspectorProvider } from './configInspector/configInspectorProvid
 import { createWatchers } from './extension/watchers';
 import { revealExpandedPaths } from './extension/treeReveal';
 import { DevProvider } from './providers/devProvider';
+import { ManageWorkspaceProvider } from './providers/manageWorkspaceProvider';
 import { ScenarioProvider } from './providers/scenarioProvider';
 import { SrcProvider } from './providers/srcProvider';
 import { WorkspaceManager } from './workspace/workspaceManager';
@@ -13,12 +14,18 @@ import { TreeViewWorkspaceState } from './workspace/treeViewState';
 
 // Extension entrypoint: compose providers, views, commands, and watchers.
 export function activate(context: vscode.ExtensionContext): void {
+    const manageWorkspaceProvider = new ManageWorkspaceProvider();
     const devProvider = new DevProvider();
     const srcProvider = new SrcProvider();
     const scenarioProvider = new ScenarioProvider(context.workspaceState);
     const configInspectorProvider = new ConfigInspectorProvider(context);
     const srcExpanded = new Set<string>();
     const scenarioExpanded = new Set<string>();
+
+    const manageWorkspaceTree = vscode.window.createTreeView(VIEW_IDS.manageWorkspace, {
+        treeDataProvider: manageWorkspaceProvider,
+        showCollapseAll: false
+    });
 
     const devTree = vscode.window.createTreeView(VIEW_IDS.devArea, {
         treeDataProvider: devProvider,
@@ -81,6 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     context.subscriptions.push(
+        manageWorkspaceTree,
         devTree,
         srcTree,
         scenarioTree,

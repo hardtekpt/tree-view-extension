@@ -82,10 +82,7 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 The extension now uses only stable VS Code menu contributions (`menus.view/title`).
 
 - Workspace actions (Save, Load, Refresh, Reset) are available in each Toolkit view title:
-  - Development Area
-  - Source Explorer
-  - Scenarios
-  - Config Inspector
+  - Manage Workspace (dedicated empty view at the top)
 - This works in both development (`F5`) and packaged `.vsix` installs.
 - No `--enable-proposed-api` launch flag is required.
 

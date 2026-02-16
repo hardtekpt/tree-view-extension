@@ -4,6 +4,7 @@ export const PYTHON_CONFIG_ROOT = 'python';
 
 export const VIEW_IDS = {
     toolkitContainer: 'toolkit',
+    manageWorkspace: 'manageWorkspace',
     devArea: 'devArea',
     srcExplorer: 'srcExplorer',
     scenarioExplorer: 'scenarioExplorer',
