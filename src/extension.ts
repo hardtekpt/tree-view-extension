@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { getScenarioPath, getSourcePath } from './config';
-import { VIEW_IDS } from './constants';
+import { getBasePath, getScenarioPath } from './config';
+import { CONFIG_ROOT, GLOB_PATTERNS, TREE_COMMANDS, VIEW_IDS } from './constants';
 import { registerCommands } from './commands/registerCommands';
 import { ConfigInspectorProvider } from './configInspector/configInspectorProvider';
 import { DevProvider } from './providers/devProvider';
@@ -26,7 +26,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const srcTree = vscode.window.createTreeView(VIEW_IDS.srcExplorer, {
         treeDataProvider: srcProvider,
-        showCollapseAll: true
+        showCollapseAll: true,
+        dragAndDropController: srcProvider
     });
 
     const scenarioTree = vscode.window.createTreeView(VIEW_IDS.scenarioExplorer, {
@@ -58,10 +59,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
         // Normalize UI before replaying expansion state.
         try {
-            await vscode.commands.executeCommand('workbench.actions.treeView.srcExplorer.collapseAll');
+            await vscode.commands.executeCommand(TREE_COMMANDS.collapseSrcExplorer);
         } catch {}
         try {
-            await vscode.commands.executeCommand('workbench.actions.treeView.scenarioExplorer.collapseAll');
+            await vscode.commands.executeCommand(TREE_COMMANDS.collapseScenarioExplorer);
         } catch {}
 
         await revealExpandedPaths(srcTree, [...srcExpanded], pathValue => srcProvider.nodeFromPath(pathValue));
@@ -106,7 +107,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(event => {
-            if (!event.affectsConfiguration('scenarioToolkit')) {
+            if (!event.affectsConfiguration(CONFIG_ROOT)) {
                 return;
             }
 
@@ -131,7 +132,7 @@ function createWatchers(refreshSrc: RefreshFunction, refreshScenarios: RefreshFu
     };
 
     const createWatcher = (basePath: string, refresh: RefreshFunction): vscode.FileSystemWatcher => {
-        const pattern = new vscode.RelativePattern(basePath, '**/*');
+        const pattern = new vscode.RelativePattern(basePath, GLOB_PATTERNS.allFiles);
         const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
         watcher.onDidCreate(refresh);
@@ -144,7 +145,7 @@ function createWatchers(refreshSrc: RefreshFunction, refreshScenarios: RefreshFu
     const rebuild = () => {
         disposeAll();
 
-        const sourcePath = getSourcePath();
+        const sourcePath = getBasePath();
         if (sourcePath) {
             watchers.push(createWatcher(sourcePath, refreshSrc));
         }

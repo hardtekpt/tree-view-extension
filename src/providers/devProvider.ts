@@ -1,15 +1,16 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { MIME_TYPES } from '../constants';
 import { DevNode } from '../nodes/devNode';
 import { toPathKey } from '../utils/pathKey';
 
 // Tree provider for the "Development Area" custom file shortlist.
-const DEV_MIME = 'application/vnd.code.tree.dev';
+const DEV_MIME = MIME_TYPES.devTree;
 
 export class DevProvider
     implements vscode.TreeDataProvider<DevNode>, vscode.TreeDragAndDropController<DevNode>
 {
-    readonly dropMimeTypes = ['text/uri-list'];
+    readonly dropMimeTypes = [MIME_TYPES.uriList];
     readonly dragMimeTypes = [DEV_MIME];
 
     private readonly changeEmitter = new vscode.EventEmitter<void>();
@@ -58,7 +59,7 @@ export class DevProvider
     }
 
     async handleDrop(_target: DevNode | undefined, dataTransfer: vscode.DataTransfer): Promise<void> {
-        const uriList = dataTransfer.get('text/uri-list');
+        const uriList = dataTransfer.get(MIME_TYPES.uriList);
         if (!uriList) {
             return;
         }

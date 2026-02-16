@@ -3,8 +3,18 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import * as vscode from 'vscode';
 import { getBasePath, getPythonCommand, getRunScript, getScenarioPath } from '../config';
+import {
+    CONFIG_ROOT,
+    FILE_EXTENSIONS,
+    FILE_NAMES,
+    FOLDER_NAMES,
+    PYTHON_CONFIG_ROOT,
+    RUNTIME_ARGS,
+    SETTINGS_KEYS,
+    VENV_PATHS
+} from '../constants';
 import { ScenarioNode } from '../nodes/scenarioNode';
-import { existsDir, uniquePath, listEntriesSorted } from '../utils/fileSystem';
+import { existsDir, existsFile, uniquePath, listEntriesSorted } from '../utils/fileSystem';
 import { toPathKey } from '../utils/pathKey';
 import { SCENARIO_STORAGE_KEYS } from './scenario/storageKeys';
 import { createTagId, formatTagChip, normalizeColor, normalizeTag } from './scenario/tagUtils';
@@ -24,6 +34,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private readonly tagCatalog = new Map<string, RunTagDefinition>();
     private readonly runTagsByPath = new Map<string, string[]>();
     private readonly runFilterTagIdsByScenario = new Map<string, string[]>();
+    private globalRunFlags = '';
 
     constructor(private readonly state: vscode.Memento) {
         this.loadState();
@@ -53,7 +64,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             runSortByScenario: Object.fromEntries(this.runSortByScenario.entries()),
             tagCatalog: [...this.tagCatalog.values()],
             runTagsByPath: Object.fromEntries(this.runTagsByPath.entries()),
-            runFilterTagIdsByScenario: Object.fromEntries(this.runFilterTagIdsByScenario.entries())
+            runFilterTagIdsByScenario: Object.fromEntries(this.runFilterTagIdsByScenario.entries()),
+            globalRunFlags: this.globalRunFlags
         };
     }
 
@@ -97,6 +109,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 this.runFilterTagIdsByScenario.set(toPathKey(scenarioPath), filteredIds);
             }
         }
+        this.globalRunFlags = normalizeRunFlags(next.globalRunFlags ?? '');
 
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
@@ -111,6 +124,26 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
             Object.fromEntries(this.runFilterTagIdsByScenario.entries())
         );
+        void this.state.update(SCENARIO_STORAGE_KEYS.globalRunFlags, this.globalRunFlags);
+        this.refresh();
+    }
+
+    async setGlobalRunFlags(): Promise<void> {
+        const currentFlags = this.globalRunFlags;
+        const entered = await vscode.window.showInputBox({
+            value: currentFlags,
+            prompt: 'Global command-line flags for all scenarios (without script and -s argument)',
+            placeHolder: '--dry-run --limit 100 "value with spaces"',
+            ignoreFocusOut: true
+        });
+
+        if (entered === undefined) {
+            return;
+        }
+
+        const normalized = normalizeRunFlags(entered);
+        this.globalRunFlags = normalized;
+        void this.state.update(SCENARIO_STORAGE_KEYS.globalRunFlags, this.globalRunFlags);
         this.refresh();
     }
 
@@ -430,7 +463,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                     const normalized = toPathKey(full);
                     const isPinned = this.pinnedScenarios.has(normalized);
                     const runSortMode = this.runSortByScenario.get(normalized) ?? 'name';
-                    return new ScenarioNode(
+                    const node = new ScenarioNode(
                         vscode.Uri.file(full),
                         'scenario',
                         vscode.TreeItemCollapsibleState.Collapsed,
@@ -439,6 +472,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                         full,
                         runSortMode
                     );
+                    this.applyScenarioHover(node);
+                    return node;
                 })
                 .sort((a, b) => {
                     if (a.isPinned !== b.isPinned) {
@@ -450,8 +485,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
         if (element.type === 'scenario') {
             // Scenario node expands into logical top-level folders.
-            const configsPath = path.join(element.uri.fsPath, 'configs');
-            const ioPath = path.join(element.uri.fsPath, 'io');
+            const configsPath = path.join(element.uri.fsPath, FOLDER_NAMES.scenarioConfigs);
+            const ioPath = path.join(element.uri.fsPath, FOLDER_NAMES.scenarioIo);
             const children: ScenarioNode[] = [];
 
             if (existsDir(configsPath)) {
@@ -460,7 +495,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                         vscode.Uri.file(configsPath),
                         'configsFolder',
                         vscode.TreeItemCollapsibleState.Collapsed,
-                        'configs',
+                        FOLDER_NAMES.scenarioConfigs,
                         false,
                         element.scenarioRootPath ?? element.uri.fsPath
                     )
@@ -473,7 +508,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                         vscode.Uri.file(ioPath),
                         'ioFolder',
                         vscode.TreeItemCollapsibleState.Collapsed,
-                        'io',
+                        FOLDER_NAMES.scenarioIo,
                         false,
                         element.scenarioRootPath ?? element.uri.fsPath
                     )
@@ -501,7 +536,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const names =
-            path.basename(element.uri.fsPath).toLowerCase() === 'io'
+            path.basename(element.uri.fsPath).toLowerCase() === FOLDER_NAMES.scenarioIo
                 ? this.sortEntries(
                     element.uri.fsPath,
                     fs.readdirSync(element.uri.fsPath),
@@ -579,7 +614,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         if (toPathKey(parentPath) === normalizedRoot) {
             const isPinned = this.pinnedScenarios.has(normalizedPath);
             const runSortMode = this.runSortByScenario.get(normalizedPath) ?? 'name';
-            return new ScenarioNode(
+            const node = new ScenarioNode(
                 vscode.Uri.file(fsPath),
                 'scenario',
                 vscode.TreeItemCollapsibleState.Collapsed,
@@ -588,6 +623,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 fsPath,
                 runSortMode
             );
+            this.applyScenarioHover(node);
+            return node;
         }
 
         const scenarioRootPath = this.findScenarioRoot(fsPath, scenariosRoot);
@@ -596,29 +633,29 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const baseName = path.basename(fsPath).toLowerCase();
-        if (baseName === 'io') {
+        if (baseName === FOLDER_NAMES.scenarioIo) {
             return new ScenarioNode(
                 vscode.Uri.file(fsPath),
                 'ioFolder',
                 vscode.TreeItemCollapsibleState.Collapsed,
-                'io',
+                FOLDER_NAMES.scenarioIo,
                 false,
                 scenarioRootPath
             );
         }
 
-        if (baseName === 'configs') {
+        if (baseName === FOLDER_NAMES.scenarioConfigs) {
             return new ScenarioNode(
                 vscode.Uri.file(fsPath),
                 'configsFolder',
                 vscode.TreeItemCollapsibleState.Collapsed,
-                'configs',
+                FOLDER_NAMES.scenarioConfigs,
                 false,
                 scenarioRootPath
             );
         }
 
-        const ioPath = path.join(scenarioRootPath, 'io');
+        const ioPath = path.join(scenarioRootPath, FOLDER_NAMES.scenarioIo);
         const isInsideIo = toPathKey(fsPath).startsWith(`${toPathKey(ioPath)}${path.sep}`);
         const isPinnedRun = isInsideIo ? this.pinnedIoRuns.has(normalizedPath) : false;
 
@@ -632,21 +669,30 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         );
     }
 
-    run(uri: vscode.Uri): void {
+    async run(uri: vscode.Uri, withSudo = false): Promise<void> {
         const basePath = getBasePath();
         if (!basePath || !existsDir(basePath)) {
-            void vscode.window.showWarningMessage('Set scenarioToolkit.basePath to a valid folder before running.');
+            void vscode.window.showWarningMessage(`Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`);
             return;
         }
 
-        const python = getPythonCommand();
+        const detectedPython = await this.configurePythonFromLocalVenv(basePath);
+        const python = detectedPython ?? getPythonCommand();
         const runScript = getRunScript();
-        const args = [runScript, uri.fsPath];
-        const command = `${python} ${args.map(quoteIfNeeded).join(' ')}`;
+        const scenarioName = path.basename(uri.fsPath);
+        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
+        const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
+        const effectiveCommand = withSudo && process.platform !== 'win32' ? 'sudo' : python;
+        const effectiveArgs = withSudo && process.platform !== 'win32' ? [python, ...args] : args;
+        const command = `${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`;
+
+        if (withSudo && process.platform === 'win32') {
+            void vscode.window.showWarningMessage('Sudo is not available on Windows. Running scenario without sudo.');
+        }
 
         this.output.appendLine(`[run] ${command}`);
 
-        const child = spawn(python, args, { cwd: basePath });
+        const child = spawn(effectiveCommand, effectiveArgs, { cwd: basePath });
         child.stdout.on('data', chunk => this.output.append(String(chunk)));
         child.stderr.on('data', chunk => this.output.append(String(chunk)));
         child.on('error', error => {
@@ -662,12 +708,80 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
     }
 
+    async runInDetachedScreen(uri: vscode.Uri): Promise<void> {
+        const basePath = getBasePath();
+        if (!basePath || !existsDir(basePath)) {
+            void vscode.window.showWarningMessage(
+                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`
+            );
+            return;
+        }
+
+        if (process.platform === 'win32') {
+            void vscode.window.showWarningMessage('Detached screen sessions are not available on Windows.');
+            return;
+        }
+
+        const detectedPython = await this.configurePythonFromLocalVenv(basePath);
+        const python = detectedPython ?? getPythonCommand();
+        const runScript = getRunScript();
+        const scenarioName = path.basename(uri.fsPath);
+        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
+        const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
+        const sessionName = buildScreenSessionName(scenarioName);
+        const screenArgs = ['-dmS', sessionName, python, ...args];
+
+        this.output.appendLine(`[run-screen] screen ${screenArgs.map(quoteIfNeeded).join(' ')}`);
+
+        const child = spawn('screen', screenArgs, { cwd: basePath });
+        child.stderr.on('data', chunk => this.output.append(String(chunk)));
+        child.on('error', error => {
+            this.output.appendLine(`[error] ${error.message}`);
+            void vscode.window.showErrorMessage(`Failed to start detached screen session: ${error.message}`);
+        });
+        child.on('close', code => {
+            this.output.appendLine(`[run-screen-exit] code=${code ?? 'unknown'}`);
+            this.output.show(true);
+            if (code === 0) {
+                void vscode.window.showInformationMessage(
+                    `Scenario started in detached screen session '${sessionName}'. Attach with: screen -r ${sessionName}`
+                );
+                return;
+            }
+
+            void vscode.window.showWarningMessage(
+                `Could not start detached screen session (exit ${code ?? 'unknown'}). Is 'screen' installed?`
+            );
+        });
+    }
+
+    private async configurePythonFromLocalVenv(basePath: string): Promise<string | undefined> {
+        const pythonPath = findPythonInBasePath(basePath);
+        if (!pythonPath) {
+            return undefined;
+        }
+
+        const toolkitConfig = vscode.workspace.getConfiguration(CONFIG_ROOT);
+        const currentToolkitPython = toolkitConfig.get<string>(SETTINGS_KEYS.pythonCommand, getPythonCommand());
+        if (currentToolkitPython !== pythonPath) {
+            await safeUpdateConfiguration(toolkitConfig, SETTINGS_KEYS.pythonCommand, pythonPath);
+        }
+
+        const pythonExtensionConfig = vscode.workspace.getConfiguration(PYTHON_CONFIG_ROOT);
+        const currentInterpreter = pythonExtensionConfig.get<string>(SETTINGS_KEYS.pythonDefaultInterpreterPath);
+        if (currentInterpreter !== pythonPath) {
+            await safeUpdateConfiguration(pythonExtensionConfig, SETTINGS_KEYS.pythonDefaultInterpreterPath, pythonPath);
+        }
+
+        return pythonPath;
+    }
+
     duplicate(uri: vscode.Uri): void {
         const destination = uniquePath(`${uri.fsPath}_copy`);
         fs.cpSync(uri.fsPath, destination, { recursive: true });
 
         // Keep duplicated scenarios clean by clearing inherited run outputs.
-        const duplicatedIoPath = path.join(destination, 'io');
+        const duplicatedIoPath = path.join(destination, FOLDER_NAMES.scenarioIo);
         if (fs.existsSync(duplicatedIoPath)) {
             fs.rmSync(duplicatedIoPath, { recursive: true, force: true });
             fs.mkdirSync(duplicatedIoPath, { recursive: true });
@@ -863,11 +977,11 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
         const entries = fs
             .readdirSync(uri.fsPath)
-            .filter(name => name.toLowerCase().endsWith('.log'))
+            .filter(name => name.toLowerCase().endsWith(FILE_EXTENSIONS.log))
             .map(name => path.join(uri.fsPath, name));
 
         if (entries.length === 0) {
-            void vscode.window.showWarningMessage(`No .log file found in '${path.basename(uri.fsPath)}'.`);
+            void vscode.window.showWarningMessage(`No ${FILE_EXTENSIONS.log} file found in '${path.basename(uri.fsPath)}'.`);
             return;
         }
 
@@ -920,6 +1034,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 this.runFilterTagIdsByScenario.set(toPathKey(scenarioPath), filteredIds);
             }
         }
+        this.globalRunFlags = normalizeRunFlags(this.state.get<string>(SCENARIO_STORAGE_KEYS.globalRunFlags, ''));
 
         this.scenarioSortMode = this.state.get<SortMode>(SCENARIO_STORAGE_KEYS.scenarioSort, 'name');
         const byScenario = this.state.get<Record<string, ScenarioRunSortMode>>(
@@ -954,6 +1069,14 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
 
         return sorted;
+    }
+
+    private applyScenarioHover(node: ScenarioNode): void {
+        if (!this.globalRunFlags) {
+            node.tooltip = undefined;
+            return;
+        }
+        node.tooltip = `Global run flags: ${this.globalRunFlags}`;
     }
 
     private matchRunTagFilter(runKey: string, scenarioKey: string): boolean {
@@ -1065,12 +1188,139 @@ function quoteIfNeeded(value: string): string {
     return /\s/.test(value) ? `"${value}"` : value;
 }
 
+function normalizeRunFlags(value: string): string {
+    return value.trim().replace(/\s+/g, ' ');
+}
+
+function parseCommandLineArgs(value: string): string[] {
+    const text = value.trim();
+    if (!text) {
+        return [];
+    }
+
+    const args: string[] = [];
+    let current = '';
+    let quote: '"' | "'" | undefined;
+    let escaping = false;
+
+    for (const char of text) {
+        if (escaping) {
+            current += char;
+            escaping = false;
+            continue;
+        }
+
+        if (char === '\\') {
+            escaping = true;
+            continue;
+        }
+
+        if (quote) {
+            if (char === quote) {
+                quote = undefined;
+            } else {
+                current += char;
+            }
+            continue;
+        }
+
+        if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+        }
+
+        if (/\s/.test(char)) {
+            if (current.length > 0) {
+                args.push(current);
+                current = '';
+            }
+            continue;
+        }
+
+        current += char;
+    }
+
+    if (escaping) {
+        current += '\\';
+    }
+    if (current.length > 0) {
+        args.push(current);
+    }
+
+    return args;
+}
+
 function getMtimeMs(filePath: string): number {
     try {
         return fs.statSync(filePath).mtimeMs;
     } catch {
         return 0;
     }
+}
+
+function findPythonInBasePath(basePath: string): string | undefined {
+    const maxDepth = 4;
+    const blockedFolders = new Set(['.git', 'node_modules']);
+    const queue: Array<{ dir: string; depth: number }> = [{ dir: basePath, depth: 0 }];
+
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) {
+            break;
+        }
+
+        const pythonPath = resolvePythonInVenvRoot(current.dir);
+        if (pythonPath) {
+            return pythonPath;
+        }
+
+        if (current.depth >= maxDepth) {
+            continue;
+        }
+
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(current.dir, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+
+        for (const entry of entries) {
+            if (!entry.isDirectory() || blockedFolders.has(entry.name) || entry.isSymbolicLink()) {
+                continue;
+            }
+            queue.push({ dir: path.join(current.dir, entry.name), depth: current.depth + 1 });
+        }
+    }
+
+    return undefined;
+}
+
+function resolvePythonInVenvRoot(venvRoot: string): string | undefined {
+    const marker = path.join(venvRoot, FILE_NAMES.venvMarker);
+    if (!existsFile(marker)) {
+        return undefined;
+    }
+
+    const unixPython = path.join(venvRoot, VENV_PATHS.unixBinDir, VENV_PATHS.unixPython);
+    const windowsPython = path.join(venvRoot, VENV_PATHS.windowsScriptsDir, VENV_PATHS.windowsPythonExe);
+    if (process.platform === 'win32') {
+        if (existsFile(windowsPython)) {
+            return windowsPython;
+        }
+        if (existsFile(unixPython)) {
+            return unixPython;
+        }
+        return undefined;
+    }
+
+    if (existsFile(unixPython)) {
+        return unixPython;
+    }
+    if (existsFile(windowsPython)) {
+        return windowsPython;
+    }
+    return undefined;
 }
 
 async function renamePathWithFallback(sourcePath: string, targetPath: string): Promise<void> {
@@ -1112,3 +1362,27 @@ function delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function buildScreenSessionName(scenarioName: string): string {
+    const normalized = scenarioName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const suffix = Date.now().toString(36);
+    return `scn_${normalized}_${suffix}`;
+}
+
+function getPreferredConfigTarget(): vscode.ConfigurationTarget {
+    return vscode.workspace.workspaceFile || (vscode.workspace.workspaceFolders?.length ?? 0) > 0
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+}
+
+async function safeUpdateConfiguration(
+    config: vscode.WorkspaceConfiguration,
+    key: string,
+    value: unknown
+): Promise<void> {
+    try {
+        await config.update(key, value, getPreferredConfigTarget());
+    } catch {
+        // If workspace target is unavailable/restricted, fallback to global.
+        await config.update(key, value, vscode.ConfigurationTarget.Global);
+    }
+}

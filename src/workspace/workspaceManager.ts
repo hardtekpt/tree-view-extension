@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getBasePath } from '../config';
+import { FILE_NAMES, FOLDER_NAMES } from '../constants';
 import { DevProvider } from '../providers/devProvider';
 import { ScenarioProvider } from '../providers/scenarioProvider';
 import { ScenarioWorkspaceState } from '../providers/scenario/types';
@@ -44,7 +45,8 @@ export class WorkspaceManager {
             runSortByScenario: {},
             tagCatalog: [],
             runTagsByPath: {},
-                runFilterTagIdsByScenario: {}
+            runFilterTagIdsByScenario: {},
+            globalRunFlags: ''
             });
         void this.applyTreeViewState({
             srcExplorerExpanded: [],
@@ -100,7 +102,8 @@ export class WorkspaceManager {
                 runSortByScenario: parsed.scenario?.runSortByScenario ?? {},
                 tagCatalog: parsed.scenario?.tagCatalog ?? [],
                 runTagsByPath: parsed.scenario?.runTagsByPath ?? {},
-                runFilterTagIdsByScenario: parsed.scenario?.runFilterTagIdsByScenario ?? {}
+                runFilterTagIdsByScenario: parsed.scenario?.runFilterTagIdsByScenario ?? {},
+                globalRunFlags: parsed.scenario?.globalRunFlags ?? ''
             });
             await this.applyTreeViewState({
                 srcExplorerExpanded: parsed.treeViews?.srcExplorerExpanded ?? [],
@@ -116,20 +119,20 @@ export class WorkspaceManager {
 }
 
 function getWorkspaceConfigPath(basePath: string): string {
-    return path.join(basePath, '.scenario-toolkit', 'workspace.json');
+    return path.join(basePath, FOLDER_NAMES.toolkitStateDir, FILE_NAMES.workspaceConfig);
 }
 
 async function getInitialWorkspaceUri(): Promise<vscode.Uri | undefined> {
     const basePath = getBasePath();
     if (basePath) {
-        const dir = path.join(basePath, '.scenario-toolkit');
+        const dir = path.join(basePath, FOLDER_NAMES.toolkitStateDir);
         fs.mkdirSync(dir, { recursive: true });
-        return vscode.Uri.file(path.join(dir, 'workspace.json'));
+        return vscode.Uri.file(path.join(dir, FILE_NAMES.workspaceConfig));
     }
 
     const firstWorkspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
     if (firstWorkspaceFolder) {
-        return vscode.Uri.joinPath(firstWorkspaceFolder, 'workspace.json');
+        return vscode.Uri.joinPath(firstWorkspaceFolder, FILE_NAMES.workspaceConfig);
     }
 
     return undefined;

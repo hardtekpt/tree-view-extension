@@ -19,4 +19,5 @@ export interface ScenarioWorkspaceState {
     tagCatalog: RunTagDefinition[];
     runTagsByPath: Record<string, string[]>;
     runFilterTagIdsByScenario: Record<string, string[]>;
+    globalRunFlags: string;
 }

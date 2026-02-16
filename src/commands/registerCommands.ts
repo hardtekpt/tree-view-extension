@@ -32,6 +32,13 @@ export function registerCommands(
             }
         }),
         vscode.commands.registerCommand(COMMANDS.runScenario, (node: WithUri) => scenarioProvider.run(node.uri)),
+        vscode.commands.registerCommand(COMMANDS.runScenarioSudo, (node: WithUri) =>
+            scenarioProvider.run(node.uri, true)
+        ),
+        vscode.commands.registerCommand(COMMANDS.runScenarioScreen, (node: WithUri) =>
+            scenarioProvider.runInDetachedScreen(node.uri)
+        ),
+        vscode.commands.registerCommand(COMMANDS.setGlobalRunFlags, () => scenarioProvider.setGlobalRunFlags()),
         vscode.commands.registerCommand(COMMANDS.duplicateScenario, (node: WithUri) =>
             scenarioProvider.duplicate(node.uri)
         ),

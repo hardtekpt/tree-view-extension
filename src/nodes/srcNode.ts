@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { COMMANDS } from '../constants';
 import { existsDir, existsFile } from '../utils/fileSystem';
+import { getFileIcon } from '../utils/treeIcons';
 
 // Tree item for filesystem entries under the source explorer.
 export class SrcNode extends vscode.TreeItem {
@@ -25,7 +26,7 @@ export class SrcNode extends vscode.TreeItem {
         }
 
         if (existsFile(fsPath)) {
-            this.iconPath = new vscode.ThemeIcon('symbol-file');
+            this.iconPath = getFileIcon(fsPath);
             this.contextValue = 'file';
             this.command = {
                 command: COMMANDS.openFile,

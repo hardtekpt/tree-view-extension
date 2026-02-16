@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { VIEW_IDS } from '../constants';
+import { FILE_EXTENSIONS, GLOB_PATTERNS, STORAGE_KEYS, VIEW_IDS, WORKBENCH_COMMANDS } from '../constants';
 import { applyXmlParameterUpdates, extractXmlParameters, readXmlFile, XmlParameter } from './xmlParameters';
 
 type IncomingMessage =
@@ -9,7 +9,7 @@ type IncomingMessage =
     | { type: 'update'; id: string; value: string }
     | { type: 'togglePin'; id: string };
 
-const PINNED_CONFIG_PARAMETERS_KEY = 'scenarioToolkit.pinnedConfigParameters';
+const CODICON_CSS_RELATIVE_PATH = ['node_modules', '@vscode', 'codicons', 'dist', 'codicon.css'] as const;
 
 // Webview shown in the sidebar for editing XML configs in a human-readable table.
 export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
@@ -20,7 +20,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
     private readonly pinnedParameterIds = new Set<string>();
 
     constructor(private readonly context: vscode.ExtensionContext) {
-        const saved = context.workspaceState.get<string[]>(PINNED_CONFIG_PARAMETERS_KEY, []);
+        const saved = context.workspaceState.get<string[]>(STORAGE_KEYS.pinnedConfigParameters, []);
         for (const id of saved) {
             this.pinnedParameterIds.add(id);
         }
@@ -28,7 +28,12 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
 
     resolveWebviewView(view: vscode.WebviewView): void {
         this.view = view;
-        view.webview.options = { enableScripts: true };
+        view.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [
+                vscode.Uri.joinPath(this.context.extensionUri, ...CODICON_CSS_RELATIVE_PATH.slice(0, -1))
+            ]
+        };
         view.webview.html = this.getHtml(view.webview);
         view.webview.onDidReceiveMessage((message: IncomingMessage) => {
             if (message.type === 'ready') {
@@ -50,13 +55,15 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
         this.rebuildWatcher();
         // Open the extension container first so the Config Inspector can be resolved.
         try {
-            await vscode.commands.executeCommand(`workbench.view.extension.${VIEW_IDS.toolkitContainer}`);
+            await vscode.commands.executeCommand(
+                `${WORKBENCH_COMMANDS.showExtensionViewContainerPrefix}${VIEW_IDS.toolkitContainer}`
+            );
         } catch {}
 
         // Focus command can vary by VS Code version; treat failures as non-fatal.
         const focusCommands = [
             `${VIEW_IDS.configInspector}.focus`,
-            'workbench.action.focusSideBar'
+            WORKBENCH_COMMANDS.focusSideBar
         ];
         for (const command of focusCommands) {
             try {
@@ -98,7 +105,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
 
         const xmlFiles = fs
             .readdirSync(this.configsFolder.fsPath)
-            .filter(name => name.toLowerCase().endsWith('.xml'))
+            .filter(name => name.toLowerCase().endsWith(FILE_EXTENSIONS.xml))
             .map(name => path.join(this.configsFolder!.fsPath, name));
 
         const rows: XmlParameter[] = [];
@@ -120,7 +127,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
         } else {
             this.pinnedParameterIds.add(id);
         }
-        void this.context.workspaceState.update(PINNED_CONFIG_PARAMETERS_KEY, [...this.pinnedParameterIds]);
+        void this.context.workspaceState.update(STORAGE_KEYS.pinnedConfigParameters, [...this.pinnedParameterIds]);
         void this.postState();
     }
 
@@ -164,7 +171,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const pattern = new vscode.RelativePattern(this.configsFolder.fsPath, '**/*.xml');
+        const pattern = new vscode.RelativePattern(this.configsFolder.fsPath, GLOB_PATTERNS.xmlFiles);
         const watcher = vscode.workspace.createFileSystemWatcher(pattern);
         const refresh = () => {
             if (Date.now() < this.ignoreFsEventsUntil) {
@@ -182,12 +189,16 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
 
     private getHtml(webview: vscode.Webview): string {
         const nonce = String(Date.now());
+        const codiconCssUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this.context.extensionUri, ...CODICON_CSS_RELATIVE_PATH)
+        );
         return /* html */ `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="${codiconCssUri}" rel="stylesheet" />
   <style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 12px; }
     .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -261,8 +272,8 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
           continue;
         }
         const tr = document.createElement('tr');
-        const pin = state.pinnedIds.has(row.id) ? '📌' : '📍';
-        tr.innerHTML = '<td><button class="pin-btn" data-id="' + escapeHtml(row.id) + '" title="Toggle pin">' + pin + '</button></td><td>' + escapeHtml(row.fileName) + '</td><td>' + escapeHtml(row.parameterPath) + '</td>';
+        const pinClass = state.pinnedIds.has(row.id) ? 'codicon-pinned' : 'codicon-pin';
+        tr.innerHTML = '<td><button class="pin-btn" data-id="' + escapeHtml(row.id) + '" title="Toggle pin"><span class="codicon ' + pinClass + '"></span></button></td><td>' + escapeHtml(row.fileName) + '</td><td>' + escapeHtml(row.parameterPath) + '</td>';
         const td = document.createElement('td');
         const input = document.createElement('input');
         input.value = row.value;
@@ -307,10 +318,11 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
 
     document.addEventListener('click', event => {
       const target = event.target;
-      if (!target || !target.classList || !target.classList.contains('pin-btn')) {
+      const pinButton = target && target.closest ? target.closest('.pin-btn') : null;
+      if (!pinButton) {
         return;
       }
-      const id = target.dataset.id;
+      const id = pinButton.dataset.id;
       if (!id) {
         return;
       }

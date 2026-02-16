@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { CONFIG_ROOT } from './constants';
+import { CONFIG_ROOT, DEFAULTS, FOLDER_NAMES, SETTINGS_KEYS } from './constants';
 
 // Centralized access to extension settings.
 function config() {
@@ -8,24 +8,24 @@ function config() {
 }
 
 export function getBasePath(): string | undefined {
-    const value = config().get<string>('basePath')?.trim();
+    const value = config().get<string>(SETTINGS_KEYS.basePath)?.trim();
     return value ? value : undefined;
 }
 
 export function getSourcePath(): string | undefined {
     const base = getBasePath();
-    return base ? path.join(base, 'src') : undefined;
+    return base ? path.join(base, FOLDER_NAMES.sourceRoot) : undefined;
 }
 
 export function getScenarioPath(): string | undefined {
     const base = getBasePath();
-    return base ? path.join(base, 'scenarios') : undefined;
+    return base ? path.join(base, FOLDER_NAMES.scenariosRoot) : undefined;
 }
 
 export function getPythonCommand(): string {
-    return config().get<string>('pythonCommand', 'python');
+    return config().get<string>(SETTINGS_KEYS.pythonCommand, DEFAULTS.pythonCommand);
 }
 
 export function getRunScript(): string {
-    return config().get<string>('runScript', 'run.py');
+    return config().get<string>(SETTINGS_KEYS.runScript, DEFAULTS.runScript);
 }

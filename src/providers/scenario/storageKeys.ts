@@ -1,10 +1,13 @@
+import { STORAGE_KEYS } from '../../constants';
+
 // Keys used for VS Code workspaceState persistence.
 export const SCENARIO_STORAGE_KEYS = {
-    pinnedScenarios: 'scenarioToolkit.pinnedScenarios',
-    pinnedIoRuns: 'scenarioToolkit.pinnedIoRuns',
-    scenarioSort: 'scenarioToolkit.scenarioSortMode',
-    runSortByScenario: 'scenarioToolkit.runSortByScenario',
-    tagCatalog: 'scenarioToolkit.tagCatalog',
-    runTagsByPath: 'scenarioToolkit.runTagsByPath',
-    runFilterTagIdsByScenario: 'scenarioToolkit.runFilterTagIdsByScenario'
+    pinnedScenarios: STORAGE_KEYS.pinnedScenarios,
+    pinnedIoRuns: STORAGE_KEYS.pinnedIoRuns,
+    scenarioSort: STORAGE_KEYS.scenarioSort,
+    runSortByScenario: STORAGE_KEYS.runSortByScenario,
+    tagCatalog: STORAGE_KEYS.tagCatalog,
+    runTagsByPath: STORAGE_KEYS.runTagsByPath,
+    runFilterTagIdsByScenario: STORAGE_KEYS.runFilterTagIdsByScenario,
+    globalRunFlags: STORAGE_KEYS.globalRunFlags
 } as const;

@@ -27,6 +27,9 @@
   },
   "commands":[
    {"command":"scenario.run","title":"Run","icon":"$(play)"},
+   {"command":"scenario.setGlobalRunFlags","title":"Set Global Run Flags","icon":"$(terminal-cmd)"},
+   {"command":"scenario.runSudo","title":"Run with sudo","icon":"$(shield)"},
+   {"command":"scenario.runScreen","title":"Run in detached screen","icon":"$(terminal)"},
    {"command":"scenario.dup","title":"Duplicate","icon":"$(copy)"},
    {"command":"scenario.rename","title":"Rename","icon":"$(edit)"},
    {"command":"scenario.del","title":"Delete","icon":"$(trash)"},
@@ -65,6 +68,7 @@
    "view/title":[
     {"command":"scenario.filter","when":"view==scenarioExplorer","group":"navigation"},
     {"command":"scenario.toggleSort","when":"view==scenarioExplorer","group":"navigation"},
+    {"command":"scenario.setGlobalRunFlags","when":"view==scenarioExplorer","group":"navigation"},
     {"command":"tags.manage","when":"view==scenarioExplorer","group":"navigation"},
     {"command":"dev.clear","when":"view==devArea","group":"navigation"}
    ],
@@ -80,6 +84,8 @@
     {"command":"scenario.dup","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@3"},
     {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@4"},
     {"command":"scenario.run","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@5"},
+    {"command":"scenario.runSudo","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@6"},
+    {"command":"scenario.runScreen","when":"view==scenarioExplorer && viewItem==scenario","group":"actions@7"},
 
     {"command":"run.del","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@1"},
     {"command":"run.rename","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@2"},
@@ -113,6 +119,7 @@
  },
  "scripts":{"compile":"tsc -p ./"},
  "dependencies":{
+  "@vscode/codicons":"^0.0.36",
   "fast-xml-parser":"^4.5.0"
  },
  "devDependencies":{

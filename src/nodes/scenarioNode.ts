@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { COMMANDS } from '../constants';
+import { getFileIcon } from '../utils/treeIcons';
 
 // Node types used by the scenario explorer tree.
 export type ScenarioNodeType = 'scenario' | 'configsFolder' | 'folder' | 'ioFolder' | 'ioRun' | 'file' | 'status';
@@ -28,7 +29,7 @@ export class ScenarioNode extends vscode.TreeItem {
         this.contextValue = type;
 
         if (type === 'file') {
-            this.iconPath = new vscode.ThemeIcon('symbol-file');
+            this.iconPath = getFileIcon(uri.fsPath);
             this.command = {
                 command: COMMANDS.openFile,
                 title: 'Open File',
@@ -43,7 +44,7 @@ export class ScenarioNode extends vscode.TreeItem {
             } else {
                 this.iconPath =
                     collapsibleState === vscode.TreeItemCollapsibleState.None
-                        ? new vscode.ThemeIcon('symbol-file')
+                        ? getFileIcon(uri.fsPath)
                         : new vscode.ThemeIcon('folder');
             }
 
