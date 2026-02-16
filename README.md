@@ -1,102 +1,80 @@
 # Scenario Toolkit
 
-Scenario Toolkit is a VS Code extension that provides a tree-based UI to work with a Python project organized as:
+Scenario Toolkit is a VS Code extension for Python scenario-driven projects.  
+It adds a dedicated Toolkit sidebar to manage source files, scenarios, scenario outputs, tags, and workspace snapshots.
 
-- `src/` for source code
-- `scenarios/` for scenario folders
-- `scenarios/<scenario>/configs/` for configuration files
-- `scenarios/<scenario>/io/` for output runs
+## Project Layout Expectations
 
-The extension adds a dedicated sidebar with focused actions for running scenarios, browsing outputs, and managing run metadata (pinning, tags, sorting, filtering).
+Set `scenarioToolkit.basePath` to a root folder with this structure:
 
-## Features
+- `<basePath>/src` (source code)
+- `<basePath>/scenarios/<scenario>/configs` (XML config files)
+- `<basePath>/scenarios/<scenario>/io` (output run folders/files)
 
-- **Development Area**
-  - Pin source files into a personal short list.
-  - Remove individual files or clear the full list.
-  - Save/load the entire extension workspace state from a single file.
+## Core Features
 
-- **Source Explorer**
-  - Browse files under `<basePath>/src`.
-  - Add files directly to Development Area.
+- Development Area:
+  - Personal shortlist of files.
+  - Drag-and-drop support from Source Explorer.
+  - Remove individual files or clear all.
 
-- **Scenario Explorer**
-  - Browse scenario folders under `<basePath>/scenarios`.
-  - Run, duplicate, rename, delete scenarios.
-  - Scenario duplication keeps `io/` empty in the copied scenario.
+- Source Explorer:
+  - Browses from `<basePath>` root.
+  - Drag-and-drop to move files/folders.
+  - Toggle files into Development Area.
+
+- Scenario Explorer:
+  - Run scenarios (normal, sudo, detached `screen`).
+  - Global run flags action in Scenarios view title.
+  - Scenario CRUD: duplicate, rename, delete.
+  - Output run CRUD: rename, delete, open `.log`.
   - Pin scenarios and output runs.
-  - Sort scenarios by name or most recent.
-  - Sort run outputs per scenario.
-  - Open run logs, rename/delete output runs.
-  - Tag output runs and filter runs by tags.
-  - Static quick-tag actions (`success`, `failed`) from right-click.
+  - Sort scenarios and per-scenario output runs.
+  - Tag output runs (catalog + assignment + filtering).
 
-- **Unified Workspace Configuration**
-  - State is saved in one file:
-    - `<basePath>/.scenario-toolkit/workspace.json`
-  - Includes:
-    - Development Area items
-    - Scenario filter/sort state
-    - Pinning state (scenarios and runs)
-    - Tag catalog and run-tag mapping
-    - Per-scenario run tag filters
+- Config Inspector:
+  - Webview editor for XML config parameters.
+  - Auto-refresh and auto-save on edits.
+  - File/parameter filtering and parameter pinning.
 
-## Requirements
+- Workspace Snapshot:
+  - Save/load/reset full extension state to/from JSON.
+  - Includes tree expansion state, run/tag/filter/sort/pin state, and global run flags.
 
-- Visual Studio Code `^1.85.0`
-- Node.js + npm (for building/running from source)
-- Python environment (for scenario run command)
+## Settings
 
-## Extension Settings
+- `scenarioToolkit.basePath`: project root path.
+- `scenarioToolkit.pythonCommand`: Python executable fallback (used if no venv auto-detected).
+- `scenarioToolkit.runScript`: script path relative to base path (default `run.py`).
 
-This extension contributes:
+## Installation (From Source)
 
-- `scenarioToolkit.basePath`
-  - Root folder containing `src/` and `scenarios/`.
-- `scenarioToolkit.pythonCommand`
-  - Python executable used to run scenarios (for example `python`, `py`, `python3`).
-- `scenarioToolkit.runScript`
-  - Script (relative to `basePath`) used for running scenarios (default `run.py`).
+1. `npm install`
+2. `npm run compile`
+3. Open the repository in VS Code.
+4. Press `F5` to launch the Extension Host.
+5. In the Extension Host, set `scenarioToolkit.basePath`.
 
-## Installation
+## Refactored Architecture
 
-### From source (development)
+- `src/extension.ts`: activation and composition.
+- `src/extension/watchers.ts`: file-watcher lifecycle.
+- `src/extension/treeReveal.ts`: expanded-node replay.
+- `src/commands/registerCommands.ts`: command registrations.
+- `src/commands/commandArgs.ts`: shared command-argument normalization.
+- `src/providers/devProvider.ts`: Development Area provider.
+- `src/providers/srcProvider.ts`: Source Explorer provider + DnD.
+- `src/providers/scenarioProvider.ts`: Scenario feature orchestration.
+- `src/providers/scenario/runtimeUtils.ts`: run/process/config/runtime helpers.
+- `src/providers/scenario/treeUtils.ts`: scenario tree sorting/filter/root helpers.
+- `src/providers/scenario/tagUtils.ts`: tag normalization/formatting.
+- `src/workspace/workspaceManager.ts`: save/load/reset workflow.
+- `src/workspace/workspaceFilePicker.ts`: save/open dialog + default path logic.
+- `src/configInspector/configInspectorProvider.ts`: webview controller.
+- `src/configInspector/webviewHtml.ts`: webview HTML template.
+- `src/configInspector/xmlParameters.ts`: XML parse/update utilities.
 
-1. Clone this repository.
-2. Install dependencies:
-   - `npm install`
-3. Build:
-   - `npm run compile`
-4. Open this folder in VS Code.
-5. Start debugging with **Run Extension** (`F5`).
-6. In the Extension Host window, set:
-   - `scenarioToolkit.basePath` to your Python project root.
+## Notes
 
-## Usage Quick Start
-
-1. Open the **Toolkit** view container in the Activity Bar.
-2. In Settings, set `scenarioToolkit.basePath`.
-3. Use top toolbar actions:
-   - Save workspace
-   - Load workspace
-   - Refresh toolkit
-4. Right-click items for full context actions (same core actions as inline icons, plus extra run/tag shortcuts where applicable).
-
-## Development Notes
-
-- Main activation entrypoint: `src/extension.ts`
-- Command wiring: `src/commands/registerCommands.ts`
-- Providers:
-  - `src/providers/devProvider.ts`
-  - `src/providers/srcProvider.ts`
-  - `src/providers/scenarioProvider.ts`
-- Scenario provider supporting modules:
-  - `src/providers/scenario/types.ts`
-  - `src/providers/scenario/storageKeys.ts`
-  - `src/providers/scenario/tagUtils.ts`
-
-## Known Limitations
-
-- VS Code TreeView does not support fully custom rich text backgrounds for description text. Tag chips are rendered using text and symbols for compatibility.
-- Container-level toolbar uses proposed API in development configuration.
-
+- Tree item descriptions cannot render arbitrary rich components, so run tags are text-based chips.
+- View-container title actions rely on VS Code proposed API behavior in development mode.

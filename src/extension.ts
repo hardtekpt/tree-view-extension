@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { getBasePath, getScenarioPath } from './config';
-import { CONFIG_ROOT, GLOB_PATTERNS, TREE_COMMANDS, VIEW_IDS } from './constants';
+import { CONFIG_ROOT, TREE_COMMANDS, VIEW_IDS } from './constants';
 import { registerCommands } from './commands/registerCommands';
 import { ConfigInspectorProvider } from './configInspector/configInspectorProvider';
+import { createWatchers } from './extension/watchers';
+import { revealExpandedPaths } from './extension/treeReveal';
 import { DevProvider } from './providers/devProvider';
 import { ScenarioProvider } from './providers/scenarioProvider';
 import { SrcProvider } from './providers/srcProvider';
@@ -87,10 +89,11 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     const watcherState = createWatchers(srcProvider.refresh.bind(srcProvider), scenarioProvider.refresh.bind(scenarioProvider));
+    watcherState.rebuild(getBasePath(), getScenarioPath());
     watcherState.attach(context);
 
     const refreshToolkit = () => {
-        watcherState.rebuild();
+        watcherState.rebuild(getBasePath(), getScenarioPath());
         srcProvider.refresh();
         scenarioProvider.refresh();
     };
@@ -117,70 +120,3 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
-
-type RefreshFunction = () => void;
-
-// Create/rebuild filesystem watchers whenever relevant config changes.
-function createWatchers(refreshSrc: RefreshFunction, refreshScenarios: RefreshFunction) {
-    let watchers: vscode.Disposable[] = [];
-
-    const disposeAll = () => {
-        for (const watcher of watchers) {
-            watcher.dispose();
-        }
-        watchers = [];
-    };
-
-    const createWatcher = (basePath: string, refresh: RefreshFunction): vscode.FileSystemWatcher => {
-        const pattern = new vscode.RelativePattern(basePath, GLOB_PATTERNS.allFiles);
-        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
-
-        watcher.onDidCreate(refresh);
-        watcher.onDidChange(refresh);
-        watcher.onDidDelete(refresh);
-
-        return watcher;
-    };
-
-    const rebuild = () => {
-        disposeAll();
-
-        const sourcePath = getBasePath();
-        if (sourcePath) {
-            watchers.push(createWatcher(sourcePath, refreshSrc));
-        }
-
-        const scenarioPath = getScenarioPath();
-        if (scenarioPath) {
-            watchers.push(createWatcher(scenarioPath, refreshScenarios));
-        }
-    };
-
-    rebuild();
-
-    return {
-        rebuild,
-        attach(context: vscode.ExtensionContext) {
-            context.subscriptions.push({ dispose: disposeAll });
-        }
-    };
-}
-
-async function revealExpandedPaths<T>(
-    treeView: vscode.TreeView<T>,
-    paths: string[],
-    resolveNode: (fsPath: string) => T | undefined
-): Promise<void> {
-    const sorted = [...paths].sort((a, b) => a.length - b.length);
-    for (const fsPath of sorted) {
-        const node = resolveNode(fsPath);
-        if (!node) {
-            continue;
-        }
-        try {
-            await treeView.reveal(node, { expand: true, focus: false, select: false });
-        } catch {
-            // Ignore nodes that no longer exist.
-        }
-    }
-}

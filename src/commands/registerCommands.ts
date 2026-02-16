@@ -2,11 +2,7 @@ import * as vscode from 'vscode';
 import { COMMANDS } from '../constants';
 import { DevProvider } from '../providers/devProvider';
 import { ScenarioProvider } from '../providers/scenarioProvider';
-
-type WithUri = { uri: vscode.Uri };
-type MaybeUriArg = vscode.Uri | WithUri | undefined;
-type NodeArg = WithUri & { scenarioRootPath?: string; type?: string };
-type MaybeNodeArg = NodeArg | vscode.Uri | undefined;
+import { asNodeArg, asUri, MaybeNodeArg, MaybeUriArg, NodeArg, WithUri } from './commandArgs';
 
 // Register every command in one place to keep activation minimal.
 export function registerCommands(
@@ -102,30 +98,4 @@ export function registerCommands(
 
 function openFile(uri: vscode.Uri): Thenable<vscode.TextEditor> {
     return vscode.window.showTextDocument(uri);
-}
-
-// Normalize command arguments that can come as Uri or node objects.
-function asUri(value: MaybeUriArg): vscode.Uri | undefined {
-    if (!value) {
-        return undefined;
-    }
-
-    if (value instanceof vscode.Uri) {
-        return value;
-    }
-
-    return value.uri;
-}
-
-// Preserve optional metadata required by scenario-specific actions.
-function asNodeArg(value: MaybeNodeArg): NodeArg | undefined {
-    if (!value) {
-        return undefined;
-    }
-
-    if (value instanceof vscode.Uri) {
-        return { uri: value };
-    }
-
-    return { uri: value.uri, scenarioRootPath: value.scenarioRootPath, type: value.type };
 }
