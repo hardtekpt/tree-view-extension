@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { COMMANDS } from '../constants';
 import { DevProvider } from '../providers/devProvider';
@@ -19,9 +21,91 @@ export function registerCommands(
 ): void {
     const { devProvider, scenarioProvider } = providers;
     const { refreshToolkit, saveWorkspace, loadWorkspace, resetWorkspace, openConfigInspector, openRunAnalysis } = callbacks;
+    let copiedSourcePath: string | undefined;
 
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.openFile, openFile),
+        vscode.commands.registerCommand(COMMANDS.copyFileSystemItem, (arg: MaybeNodeArg) => {
+            const uri = asUri(arg);
+            if (!uri || !fs.existsSync(uri.fsPath)) {
+                return;
+            }
+            copiedSourcePath = uri.fsPath;
+            void vscode.window.showInformationMessage(`Copied: ${copiedSourcePath}`);
+        }),
+        vscode.commands.registerCommand(COMMANDS.pasteFileSystemItem, (arg: MaybeNodeArg) => {
+            const uri = asUri(arg);
+            if (!uri || !copiedSourcePath || !fs.existsSync(copiedSourcePath)) {
+                return;
+            }
+
+            const targetPath = uri.fsPath;
+            const destinationDir =
+                fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()
+                    ? targetPath
+                    : path.dirname(targetPath);
+            if (!fs.existsSync(destinationDir) || !fs.statSync(destinationDir).isDirectory()) {
+                void vscode.window.showErrorMessage('Invalid paste destination.');
+                return;
+            }
+
+            const destinationPath = path.join(destinationDir, path.basename(copiedSourcePath));
+            if (destinationPath === copiedSourcePath || destinationPath.startsWith(`${copiedSourcePath}${path.sep}`)) {
+                void vscode.window.showErrorMessage('Cannot paste into the same path or its child.');
+                return;
+            }
+            if (fs.existsSync(destinationPath)) {
+                void vscode.window.showErrorMessage(`Destination already exists: ${destinationPath}`);
+                return;
+            }
+
+            try {
+                const stat = fs.statSync(copiedSourcePath);
+                if (stat.isDirectory()) {
+                    fs.cpSync(copiedSourcePath, destinationPath, { recursive: true });
+                } else {
+                    fs.cpSync(copiedSourcePath, destinationPath);
+                }
+                refreshToolkit();
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                void vscode.window.showErrorMessage(`Paste failed: ${message}`);
+            }
+        }),
+        vscode.commands.registerCommand(COMMANDS.deleteFileSystemItem, async (arg: MaybeNodeArg) => {
+            const uri = asUri(arg);
+            if (!uri || !fs.existsSync(uri.fsPath)) {
+                return;
+            }
+            const targetPath = uri.fsPath;
+            const targetName = path.basename(targetPath);
+            const confirm = await vscode.window.showWarningMessage(
+                `Delete '${targetName}'?`,
+                { modal: true },
+                'Delete'
+            );
+            if (confirm !== 'Delete') {
+                return;
+            }
+
+            try {
+                const stat = fs.statSync(targetPath);
+                fs.rmSync(targetPath, { recursive: stat.isDirectory(), force: true });
+                devProvider.remove(uri);
+                refreshToolkit();
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                void vscode.window.showErrorMessage(`Delete failed: ${message}`);
+            }
+        }),
+        vscode.commands.registerCommand(COMMANDS.copyFileSystemPath, async (arg: MaybeNodeArg) => {
+            const uri = asUri(arg);
+            if (!uri) {
+                return;
+            }
+            await vscode.env.clipboard.writeText(uri.fsPath);
+            void vscode.window.showInformationMessage(`Copied path: ${uri.fsPath}`);
+        }),
         vscode.commands.registerCommand(COMMANDS.toggleDev, (arg: MaybeUriArg) => {
             const uri = asUri(arg);
             if (uri) {

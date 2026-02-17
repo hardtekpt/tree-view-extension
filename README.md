@@ -46,7 +46,7 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 
 - `scenarioToolkit.basePath`: project root path.
 - `scenarioToolkit.pythonCommand`: Python executable fallback (used if no venv auto-detected).
-- `scenarioToolkit.runScript`: script path relative to base path (default `run.py`).
+- `scenarioToolkit.runCommandTemplate`: command template args with `<scenario_name>` placeholder (default `run.py <scenario_name>`).
 
 ## Installation (From Source)
 
@@ -78,14 +78,21 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
    - `Extensions: Install from VSIX...`
 2. Select the generated `.vsix` file.
 
-## Toolbar Behavior (No Proposed API)
+## Command Palette Commands
 
-The extension now uses only stable VS Code menu contributions (`menus.view/title`).
+Workspace actions are available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-- Workspace actions (Save, Load, Refresh, Reset) are available in each Toolkit view title:
-  - Manage Workspace (dedicated empty view at the top)
-- This works in both development (`F5`) and packaged `.vsix` installs.
-- No `--enable-proposed-api` launch flag is required.
+- `Save Workspace`
+- `Load Workspace`
+- `Refresh Toolkit`
+- `Reset Workspace`
+
+Keywords you can type to find them quickly:
+
+- `workspace save`
+- `workspace load`
+- `refresh toolkit`
+- `workspace reset`
 
 ## Refactored Architecture
 

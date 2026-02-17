@@ -21,13 +21,14 @@ export class SrcNode extends vscode.TreeItem {
         this.resourceUri = uri;
 
         if (isDirectory) {
+            this.contextValue = 'srcFolder';
             this.iconPath = new vscode.ThemeIcon('folder');
             return;
         }
 
         if (existsFile(fsPath)) {
             this.iconPath = getFileIcon(fsPath);
-            this.contextValue = 'file';
+            this.contextValue = 'srcFile';
             this.command = {
                 command: COMMANDS.openFile,
                 title: 'Open File',

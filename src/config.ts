@@ -26,6 +26,6 @@ export function getPythonCommand(): string {
     return config().get<string>(SETTINGS_KEYS.pythonCommand, DEFAULTS.pythonCommand);
 }
 
-export function getRunScript(): string {
-    return config().get<string>(SETTINGS_KEYS.runScript, DEFAULTS.runScript);
+export function getRunCommandTemplate(): string {
+    return config().get<string>(SETTINGS_KEYS.runCommandTemplate, DEFAULTS.runCommandTemplate);
 }

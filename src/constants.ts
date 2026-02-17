@@ -4,7 +4,6 @@ export const PYTHON_CONFIG_ROOT = 'python';
 
 export const VIEW_IDS = {
     toolkitContainer: 'toolkit',
-    manageWorkspace: 'manageWorkspace',
     devArea: 'devArea',
     srcExplorer: 'srcExplorer',
     scenarioExplorer: 'scenarioExplorer',
@@ -14,13 +13,13 @@ export const VIEW_IDS = {
 export const SETTINGS_KEYS = {
     basePath: 'basePath',
     pythonCommand: 'pythonCommand',
-    runScript: 'runScript',
+    runCommandTemplate: 'runCommandTemplate',
     pythonDefaultInterpreterPath: 'defaultInterpreterPath'
 } as const;
 
 export const DEFAULTS = {
     pythonCommand: 'python',
-    runScript: 'run.py'
+    runCommandTemplate: 'run.py <scenario_name>'
 } as const;
 
 export const FOLDER_NAMES = {
@@ -44,10 +43,6 @@ export const FILE_EXTENSIONS = {
 export const GLOB_PATTERNS = {
     allFiles: '**/*',
     xmlFiles: '**/*.xml'
-} as const;
-
-export const RUNTIME_ARGS = {
-    scenarioFlag: '-s'
 } as const;
 
 export const VENV_PATHS = {
@@ -90,6 +85,10 @@ export const STORAGE_KEYS = {
 
 export const COMMANDS = {
     openFile: 'scenario.openFile',
+    copyFileSystemItem: 'filesystem.copy',
+    pasteFileSystemItem: 'filesystem.paste',
+    deleteFileSystemItem: 'filesystem.delete',
+    copyFileSystemPath: 'filesystem.copyPath',
     toggleDev: 'scenario.toggleDev',
     runScenario: 'scenario.run',
     runScenarioDebug: 'scenario.runDebug',

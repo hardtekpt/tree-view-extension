@@ -23,10 +23,10 @@
      "default": "python",
      "description": "Python command used to run scenarios (example: python, py, python3)"
     },
-    "scenarioToolkit.runScript": {
+    "scenarioToolkit.runCommandTemplate": {
      "type": "string",
-     "default": "run.py",
-     "description": "Script (relative to basePath) used for running a scenario"
+     "default": "run.py <scenario_name>",
+     "description": "Python command template args (without python executable). Must include <scenario_name>, e.g. main.py <scenario_name>"
     }
    }
   },
@@ -41,10 +41,6 @@
   },
   "views": {
    "toolkit": [
-    {
-     "id": "manageWorkspace",
-     "name": "Manage Workspace"
-    },
     {
      "id": "devArea",
      "name": "Development Area",
@@ -66,6 +62,26 @@
    ]
   },
   "commands": [
+   {
+    "command": "filesystem.copy",
+    "title": "Copy",
+    "icon": "$(copy)"
+   },
+   {
+    "command": "filesystem.paste",
+    "title": "Paste",
+    "icon": "$(clippy)"
+   },
+   {
+    "command": "filesystem.delete",
+    "title": "Delete",
+    "icon": "$(trash)"
+   },
+   {
+    "command": "filesystem.copyPath",
+    "title": "Copy Path",
+    "icon": "$(link)"
+   },
    {
     "command": "scenario.run",
     "title": "Run",
@@ -108,22 +124,22 @@
    },
    {
     "command": "run.rename",
-    "title": "Rename Output Run",
+    "title": "Rename",
     "icon": "$(edit)"
    },
    {
     "command": "run.del",
-    "title": "Delete Output Run",
+    "title": "Delete",
     "icon": "$(trash)"
    },
    {
     "command": "run.analyze",
-    "title": "Analyze Output Run",
+    "title": "Analyze",
     "icon": "$(graph-line)"
    },
    {
     "command": "run.openLog",
-    "title": "Open Output Log",
+    "title": "Open Log",
     "icon": "$(output)"
    },
    {
@@ -235,26 +251,6 @@
   "menus": {
    "view/title": [
     {
-     "command": "workspace.save",
-     "when": "view==manageWorkspace",
-     "group": "navigation@1"
-    },
-    {
-     "command": "workspace.load",
-     "when": "view==manageWorkspace",
-     "group": "navigation@2"
-    },
-    {
-     "command": "scenario.refresh",
-     "when": "view==manageWorkspace",
-     "group": "navigation@3"
-    },
-    {
-     "command": "workspace.reset",
-     "when": "view==manageWorkspace",
-     "group": "navigation@4"
-    },
-    {
      "command": "scenario.filter",
      "when": "view==scenarioExplorer",
      "group": "navigation"
@@ -282,16 +278,6 @@
    ],
    "view/item/context": [
     {
-     "command": "scenario.del",
-     "when": "view==scenarioExplorer && viewItem==scenario",
-     "group": "inline@1"
-    },
-    {
-     "command": "scenario.rename",
-     "when": "view==scenarioExplorer && viewItem==scenario",
-     "group": "inline@2"
-    },
-    {
      "command": "scenario.dup",
      "when": "view==scenarioExplorer && viewItem==scenario",
      "group": "inline@3"
@@ -314,22 +300,27 @@
     {
      "command": "scenario.del",
      "when": "view==scenarioExplorer && viewItem==scenario",
-     "group": "core@1"
+     "group": "edit@1"
     },
     {
      "command": "scenario.rename",
      "when": "view==scenarioExplorer && viewItem==scenario",
-     "group": "core@2"
+     "group": "edit@2"
+    },
+    {
+     "command": "filesystem.copyPath",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "edit@3"
     },
     {
      "command": "scenario.dup",
      "when": "view==scenarioExplorer && viewItem==scenario",
-     "group": "core@3"
+     "group": "core@1"
     },
     {
      "command": "scenario.pin",
      "when": "view==scenarioExplorer && viewItem==scenario",
-     "group": "core@4"
+     "group": "core@2"
     },
     {
      "command": "scenario.run",
@@ -350,16 +341,6 @@
      "command": "scenario.toggleSudoExecution",
      "when": "view==scenarioExplorer && viewItem==scenario",
      "group": "run@9"
-    },
-    {
-     "command": "run.del",
-     "when": "view==scenarioExplorer && viewItem==ioRun",
-     "group": "inline@1"
-    },
-    {
-     "command": "run.rename",
-     "when": "view==scenarioExplorer && viewItem==ioRun",
-     "group": "inline@2"
     },
     {
      "command": "run.openLog",
@@ -384,27 +365,32 @@
     {
      "command": "run.del",
      "when": "view==scenarioExplorer && viewItem==ioRun",
-     "group": "core@1"
+     "group": "edit@1"
     },
     {
      "command": "run.rename",
      "when": "view==scenarioExplorer && viewItem==ioRun",
-     "group": "core@2"
+     "group": "edit@2"
+    },
+    {
+     "command": "filesystem.copyPath",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "edit@3"
     },
     {
      "command": "run.openLog",
      "when": "view==scenarioExplorer && viewItem==ioRun",
-     "group": "core@3"
+     "group": "core@1"
     },
     {
      "command": "run.analyze",
      "when": "view==scenarioExplorer && viewItem==ioRun",
-     "group": "core@4"
+     "group": "core@2"
     },
     {
      "command": "scenario.pin",
      "when": "view==scenarioExplorer && viewItem==ioRun",
-     "group": "core@5"
+     "group": "core@3"
     },
     {
      "command": "run.tags",
@@ -452,14 +438,44 @@
      "group": "run@1"
     },
     {
+     "command": "filesystem.copyPath",
+     "when": "view==scenarioExplorer && viewItem==ioFolder",
+     "group": "actions@1"
+    },
+    {
+     "command": "filesystem.copyPath",
+     "when": "view==scenarioExplorer && viewItem==configsFolder",
+     "group": "actions@1"
+    },
+    {
+     "command": "filesystem.copy",
+     "when": "view==srcExplorer && (viewItem==srcFile || viewItem==srcFolder)",
+     "group": "actions@1"
+    },
+    {
+     "command": "filesystem.paste",
+     "when": "view==srcExplorer && (viewItem==srcFile || viewItem==srcFolder)",
+     "group": "actions@2"
+    },
+    {
+     "command": "filesystem.delete",
+     "when": "view==srcExplorer && (viewItem==srcFile || viewItem==srcFolder)",
+     "group": "actions@3"
+    },
+    {
+     "command": "filesystem.copyPath",
+     "when": "view==srcExplorer && (viewItem==srcFile || viewItem==srcFolder)",
+     "group": "actions@4"
+    },
+    {
      "command": "scenario.toggleDev",
-     "when": "view==srcExplorer && viewItem==file",
+     "when": "view==srcExplorer && viewItem==srcFile",
      "group": "inline"
     },
     {
      "command": "scenario.toggleDev",
-     "when": "view==srcExplorer && viewItem==file",
-     "group": "actions@1"
+     "when": "view==srcExplorer && viewItem==srcFile",
+     "group": "dev@1"
     },
     {
      "command": "dev.remove",
@@ -469,7 +485,27 @@
     {
      "command": "dev.remove",
      "when": "view==devArea && viewItem==devFile",
-     "group": "actions@1"
+     "group": "dev@1"
+    },
+    {
+     "command": "filesystem.copy",
+     "when": "view==devArea && viewItem==devFile",
+     "group": "actions@2"
+    },
+    {
+     "command": "filesystem.paste",
+     "when": "view==devArea && viewItem==devFile",
+     "group": "actions@3"
+    },
+    {
+     "command": "filesystem.delete",
+     "when": "view==devArea && viewItem==devFile",
+     "group": "actions@4"
+    },
+    {
+     "command": "filesystem.copyPath",
+     "when": "view==devArea && viewItem==devFile",
+     "group": "actions@5"
     }
    ],
    "commandPalette": [

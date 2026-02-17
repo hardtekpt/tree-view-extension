@@ -3,14 +3,13 @@ import * as net from 'net';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import * as vscode from 'vscode';
-import { getBasePath, getRunScript, getScenarioPath } from '../config';
+import { getBasePath, getRunCommandTemplate, getScenarioPath } from '../config';
 import {
     CONFIG_ROOT,
     DEFAULTS,
     FILE_EXTENSIONS,
     FOLDER_NAMES,
     PYTHON_CONFIG_ROOT,
-    RUNTIME_ARGS,
     SETTINGS_KEYS
 } from '../constants';
 import { ScenarioNode } from '../nodes/scenarioNode';
@@ -164,8 +163,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const currentFlags = this.globalRunFlags;
         const entered = await vscode.window.showInputBox({
             value: currentFlags,
-            prompt: 'Global command-line flags for all scenarios (without script and -s argument)',
-            placeHolder: '--dry-run --limit 100 "value with spaces"',
+            prompt: 'Global command-line flags for all scenarios',
+            placeHolder: '<-c> <-p> <-f>"',
             ignoreFocusOut: true
         });
 
@@ -548,15 +547,17 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             }
 
             if (existsDir(ioPath)) {
+                const ioNode = new ScenarioNode(
+                    vscode.Uri.file(ioPath),
+                    'ioFolder',
+                    vscode.TreeItemCollapsibleState.Collapsed,
+                    FOLDER_NAMES.scenarioIo,
+                    false,
+                    element.scenarioRootPath ?? element.uri.fsPath
+                );
+                this.applyIoFolderHover(ioNode);
                 children.push(
-                    new ScenarioNode(
-                        vscode.Uri.file(ioPath),
-                        'ioFolder',
-                        vscode.TreeItemCollapsibleState.Collapsed,
-                        FOLDER_NAMES.scenarioIo,
-                        false,
-                        element.scenarioRootPath ?? element.uri.fsPath
-                    )
+                    ioNode
                 );
             }
 
@@ -608,17 +609,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             );
 
             if (isIoFolder) {
-                const tagIds = this.runTagsByPath.get(key) ?? [];
-                const tags = tagIds
-                    .map(tagId => this.tagCatalog.get(tagId))
-                    .filter((tag): tag is RunTagDefinition => Boolean(tag));
-
-                if (tags.length > 0) {
-                    node.description = tags.map(tag => formatTagChip(tag)).join(' ');
-                    node.tooltip = tags
-                        .map(tag => `${tag.label} (${tag.color}${tag.icon ? `, ${tag.icon}` : ''})`)
-                        .join('\n');
-                }
+                this.applyIoRunDetails(node, element.scenarioRootPath ?? element.uri.fsPath);
             }
 
             return node;
@@ -684,7 +675,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
         const baseName = path.basename(fsPath).toLowerCase();
         if (baseName === FOLDER_NAMES.scenarioIo) {
-            return new ScenarioNode(
+            const ioNode = new ScenarioNode(
                 vscode.Uri.file(fsPath),
                 'ioFolder',
                 vscode.TreeItemCollapsibleState.Collapsed,
@@ -692,6 +683,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 false,
                 scenarioRootPath
             );
+            this.applyIoFolderHover(ioNode);
+            return ioNode;
         }
 
         if (baseName === FOLDER_NAMES.scenarioConfigs) {
@@ -709,7 +702,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const isInsideIo = toPathKey(fsPath).startsWith(`${toPathKey(ioPath)}${path.sep}`);
         const isPinnedRun = isInsideIo ? this.pinnedIoRuns.has(normalizedPath) : false;
 
-        return new ScenarioNode(
+        const node = new ScenarioNode(
             vscode.Uri.file(fsPath),
             isInsideIo ? 'ioRun' : 'folder',
             vscode.TreeItemCollapsibleState.Collapsed,
@@ -717,6 +710,10 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             isPinnedRun,
             scenarioRootPath
         );
+        if (isInsideIo) {
+            this.applyIoRunDetails(node, scenarioRootPath);
+        }
+        return node;
     }
 
     // Run scenario immediately in the local process.
@@ -728,17 +725,22 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const python = await this.configurePythonFromLocalVenv(basePath);
-        const runScript = getRunScript();
         const scenarioName = path.basename(uri.fsPath);
+        const runCommand = this.buildScenarioRunCommand(basePath, scenarioName);
+        if (!runCommand) {
+            return;
+        }
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
-        const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
+        const args = [...runCommand.args, ...extraFlags];
         const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
         if (useSudo === undefined) {
             return;
         }
 
         const effectiveCommand = useSudo ? 'sudo' : python;
-        const effectiveArgs = useSudo ? ['-n', python, ...args] : args;
+        const effectiveArgs = useSudo
+            ? ['-n', python, runCommand.program, ...args]
+            : [runCommand.program, ...args];
         const command = `${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`;
         this.output.appendLine(`[run] ${command}`);
 
@@ -769,8 +771,11 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const python = await this.configurePythonFromLocalVenv(basePath);
-        const runScript = getRunScript();
         const scenarioName = path.basename(uri.fsPath);
+        const runCommand = this.buildScenarioRunCommand(basePath, scenarioName);
+        if (!runCommand) {
+            return;
+        }
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
         const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
         if (useSudo === undefined) {
@@ -783,7 +788,6 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 return;
             }
 
-            const program = path.isAbsolute(runScript) ? runScript : path.join(basePath, runScript);
             const port = await this.allocateDebugPort();
             const debugArgs = [
                 '-m',
@@ -791,9 +795,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 '--listen',
                 `127.0.0.1:${port}`,
                 '--wait-for-client',
-                program,
-                RUNTIME_ARGS.scenarioFlag,
-                scenarioName,
+                runCommand.program,
+                ...runCommand.args,
                 ...extraFlags
             ];
             this.output.appendLine(`[run-debug-sudo] sudo -n ${[python, ...debugArgs].map(quoteIfNeeded).join(' ')}`);
@@ -839,9 +842,9 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             type: 'python',
             request: 'launch',
             name: `Run Scenario: ${scenarioName}`,
-            program: path.isAbsolute(runScript) ? runScript : path.join(basePath, runScript),
+            program: runCommand.program,
             cwd: basePath,
-            args: [RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags],
+            args: [...runCommand.args, ...extraFlags],
             python,
             console: 'integratedTerminal',
             justMyCode: false
@@ -864,10 +867,13 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const python = await this.configurePythonFromLocalVenv(basePath);
-        const runScript = getRunScript();
         const scenarioName = path.basename(uri.fsPath);
+        const runCommand = this.buildScenarioRunCommand(basePath, scenarioName);
+        if (!runCommand) {
+            return;
+        }
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
-        const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
+        const args = [...runCommand.args, ...extraFlags];
         const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
         if (useSudo === undefined) {
             return;
@@ -879,7 +885,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const sessionName = buildScreenSessionName(scenarioName);
-        const screenArgs = ['-dmS', sessionName, python, ...args];
+        const screenArgs = ['-dmS', sessionName, python, runCommand.program, ...args];
         const effectiveCommand = useSudo ? 'sudo' : 'screen';
         const effectiveArgs = useSudo ? ['-n', 'screen', ...screenArgs] : screenArgs;
 
@@ -1005,6 +1011,32 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
             tryConnect();
         });
+    }
+
+    private buildScenarioRunCommand(
+        basePath: string,
+        scenarioName: string
+    ): { program: string; args: string[] } | undefined {
+        const template = getRunCommandTemplate().trim();
+        if (!template.includes('<scenario_name>')) {
+            void vscode.window.showWarningMessage(
+                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.runCommandTemplate} with '<scenario_name>' placeholder.`
+            );
+            return undefined;
+        }
+
+        const expanded = template.replace(/<scenario_name>/g, scenarioName);
+        const parts = parseCommandLineArgs(expanded);
+        if (parts.length === 0) {
+            void vscode.window.showWarningMessage(
+                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.runCommandTemplate} to a valid command.`
+            );
+            return undefined;
+        }
+
+        const [programToken, ...args] = parts;
+        const program = path.isAbsolute(programToken) ? programToken : path.join(basePath, programToken);
+        return { program, args };
     }
 
     private async ensureDebugpyAvailable(pythonPath: string, basePath: string): Promise<boolean> {
@@ -1358,17 +1390,82 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     }
 
     private applyScenarioHover(node: ScenarioNode): void {
-        const scenarioKey = toPathKey(node.scenarioRootPath ?? node.uri.fsPath);
-        const sudoEnabled = this.sudoExecutionByScenario.get(scenarioKey) === true;
-        if (!this.globalRunFlags && !sudoEnabled) {
-            node.tooltip = undefined;
-            return;
+        const scenarioPath = node.scenarioRootPath ?? node.uri.fsPath;
+        const scenarioName = path.basename(scenarioPath);
+        const sudoEnabled = this.isSudoEnabledForScenario(scenarioPath);
+        const scenarioFilter = this.filter ? this.filter : 'None';
+        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'name';
+        const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
+        const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
+
+        node.tooltip = [
+            `Scenario: ${scenarioName}`,
+            `Sudo: ${sudoEnabled ? 'Enabled' : 'Disabled'}`,
+            `Run flags: ${runFlags}`,
+            `Scenario filter: ${scenarioFilter}`,
+            `Scenario sort: ${this.formatSortMode(this.scenarioSortMode)}`,
+            `Run sort: ${this.formatSortMode(runSortMode)}`,
+            `Run tag filter: ${activeRunTagFilter}`
+        ].join('\n');
+    }
+
+    private applyIoFolderHover(node: ScenarioNode): void {
+        const scenarioPath = node.scenarioRootPath ?? node.uri.fsPath;
+        const scenarioName = path.basename(scenarioPath);
+        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'name';
+        const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
+        const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
+
+        node.tooltip = [
+            `Scenario: ${scenarioName}`,
+            `Folder: ${FOLDER_NAMES.scenarioIo}`,
+            `Run sort: ${this.formatSortMode(runSortMode)}`,
+            `Run tag filter: ${activeRunTagFilter}`,
+            `Sudo: ${this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'}`,
+            `Run flags: ${runFlags}`
+        ].join('\n');
+    }
+
+    private applyIoRunDetails(node: ScenarioNode, scenarioPath: string): void {
+        const runName = path.basename(node.uri.fsPath);
+        const scenarioName = path.basename(scenarioPath);
+        const runKey = toPathKey(node.uri.fsPath);
+        const tagIds = this.runTagsByPath.get(runKey) ?? [];
+        const tags = tagIds
+            .map(tagId => this.tagCatalog.get(tagId))
+            .filter((tag): tag is RunTagDefinition => Boolean(tag));
+        if (tags.length > 0) {
+            node.description = tags.map(tag => formatTagChip(tag)).join(' ');
         }
-        const details = [
-            `Sudo mode: ${sudoEnabled ? 'On' : 'Off'}`,
-            this.globalRunFlags ? `Global run flags: ${this.globalRunFlags}` : undefined
-        ].filter(Boolean);
-        node.tooltip = details.join('\n');
+
+        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'name';
+        const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
+        node.tooltip = [
+            `Run: ${runName}`,
+            `Scenario: ${scenarioName}`,
+            `Tags: ${tags.length > 0 ? tags.map(tag => tag.label).join(', ') : 'None'}`,
+            `Active run tag filter: ${this.formatTagFilterForScenario(scenarioPath)}`,
+            `Sudo: ${this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'}`,
+            `Run flags: ${runFlags}`,
+            `Run sort: ${this.formatSortMode(runSortMode)}`,
+            `Scenario filter: ${this.filter ? this.filter : 'None'}`
+        ].join('\n');
+    }
+
+    private formatTagFilterForScenario(scenarioPath: string): string {
+        const selectedIds = this.runFilterTagIdsByScenario.get(toPathKey(scenarioPath)) ?? [];
+        if (selectedIds.length === 0) {
+            return 'None';
+        }
+
+        const labels = selectedIds
+            .map(tagId => this.tagCatalog.get(tagId)?.label)
+            .filter((label): label is string => Boolean(label));
+        return labels.length > 0 ? labels.join(', ') : 'None';
+    }
+
+    private formatSortMode(mode: SortMode | ScenarioRunSortMode): string {
+        return mode === 'recent' ? 'Most recent' : 'Name';
     }
 
     private persistTagState(): void {
