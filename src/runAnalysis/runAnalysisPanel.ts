@@ -213,7 +213,8 @@ function renderFolder(webview: vscode.Webview, runUri: vscode.Uri, folder: PlotF
             const relFile = folder.relativePath ? path.join(folder.relativePath, file) : file;
             const fileUri = vscode.Uri.file(path.join(runUri.fsPath, relFile));
             const src = webview.asWebviewUri(fileUri);
-            return `<figure><img src="${src}" alt="${escapeHtml(file)}" loading="lazy" /><figcaption>${escapeHtml(relFile)}</figcaption></figure>`;
+            const label = path.parse(file).name;
+            return `<figure><img src="${src}" alt="${escapeHtml(file)}" loading="lazy" /><figcaption>${escapeHtml(label)}</figcaption></figure>`;
         })
         .join('');
 
