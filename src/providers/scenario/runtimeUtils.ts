@@ -82,39 +82,36 @@ export function getMtimeMs(filePath: string): number {
     }
 }
 
-// Locate a Python venv interpreter below the configured base path.
+// Locate a Python venv interpreter in the base path root (non-recursive).
 export function findPythonInBasePath(basePath: string): string | undefined {
-    const maxDepth = 4;
-    const blockedFolders = new Set(['.git', 'node_modules']);
-    const queue: Array<{ dir: string; depth: number }> = [{ dir: basePath, depth: 0 }];
+    // Support both "<basePath> is venv root" and "<basePath>/<venvDir>" layouts.
+    const rootCandidate = resolvePythonInVenvRoot(basePath);
+    if (rootCandidate) {
+        return rootCandidate;
+    }
 
-    while (queue.length > 0) {
-        const current = queue.shift();
-        if (!current) {
-            break;
-        }
-
-        const pythonPath = resolvePythonInVenvRoot(current.dir);
+    const preferredDirs = ['.venv', 'venv', 'env'];
+    for (const dirName of preferredDirs) {
+        const pythonPath = resolvePythonInVenvRoot(path.join(basePath, dirName));
         if (pythonPath) {
             return pythonPath;
         }
+    }
 
-        if (current.depth >= maxDepth) {
+    let entries: fs.Dirent[];
+    try {
+        entries = fs.readdirSync(basePath, { withFileTypes: true });
+    } catch {
+        return undefined;
+    }
+
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink() || preferredDirs.includes(entry.name)) {
             continue;
         }
-
-        let entries: fs.Dirent[];
-        try {
-            entries = fs.readdirSync(current.dir, { withFileTypes: true });
-        } catch {
-            continue;
-        }
-
-        for (const entry of entries) {
-            if (!entry.isDirectory() || blockedFolders.has(entry.name) || entry.isSymbolicLink()) {
-                continue;
-            }
-            queue.push({ dir: path.join(current.dir, entry.name), depth: current.depth + 1 });
+        const pythonPath = resolvePythonInVenvRoot(path.join(basePath, entry.name));
+        if (pythonPath) {
+            return pythonPath;
         }
     }
 

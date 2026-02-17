@@ -82,7 +82,8 @@ export const STORAGE_KEYS = {
     tagCatalog: `${CONFIG_ROOT}.tagCatalog`,
     runTagsByPath: `${CONFIG_ROOT}.runTagsByPath`,
     runFilterTagIdsByScenario: `${CONFIG_ROOT}.runFilterTagIdsByScenario`,
-    globalRunFlags: `${CONFIG_ROOT}.globalRunFlags`
+    globalRunFlags: `${CONFIG_ROOT}.globalRunFlags`,
+    sudoExecutionEnabled: `${CONFIG_ROOT}.sudoExecutionEnabled`
 } as const;
 
 export const COMMANDS = {
@@ -90,8 +91,9 @@ export const COMMANDS = {
     toggleDev: 'scenario.toggleDev',
     runScenario: 'scenario.run',
     runScenarioDebug: 'scenario.runDebug',
-    runScenarioSudo: 'scenario.runSudo',
     runScenarioScreen: 'scenario.runScreen',
+    enableSudoExecution: 'scenario.enableSudoExecution',
+    disableSudoExecution: 'scenario.disableSudoExecution',
     setGlobalRunFlags: 'scenario.setGlobalRunFlags',
     duplicateScenario: 'scenario.dup',
     renameScenario: 'scenario.rename',

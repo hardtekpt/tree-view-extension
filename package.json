@@ -1,140 +1,527 @@
 {
- "name":"scenario-toolkit",
- "displayName":"Scenario Toolkit",
- "version":"0.0.2",
- "engines":{"vscode":"^1.85.0"},
- "main":"./out/extension.js",
- "activationEvents":["*"],
-  "contributes":{
-  "configuration":{
-   "properties":{
-    "scenarioToolkit.basePath":{"type":"string","default":"","description":"Root containing src and scenarios"},
-    "scenarioToolkit.pythonCommand":{"type":"string","default":"python","description":"Python command used to run scenarios (example: python, py, python3)"},
-    "scenarioToolkit.runScript":{"type":"string","default":"run.py","description":"Script (relative to basePath) used for running a scenario"}
+ "name": "scenario-toolkit",
+ "displayName": "Scenario Toolkit",
+ "publisher": "Francisco Santos",
+ "version": "0.0.2",
+ "engines": {
+  "vscode": "^1.85.0"
+ },
+ "main": "./out/extension.js",
+ "activationEvents": [
+  "*"
+ ],
+ "contributes": {
+  "configuration": {
+   "properties": {
+    "scenarioToolkit.basePath": {
+     "type": "string",
+     "default": "",
+     "description": "Root containing src and scenarios"
+    },
+    "scenarioToolkit.pythonCommand": {
+     "type": "string",
+     "default": "python",
+     "description": "Python command used to run scenarios (example: python, py, python3)"
+    },
+    "scenarioToolkit.runScript": {
+     "type": "string",
+     "default": "run.py",
+     "description": "Script (relative to basePath) used for running a scenario"
+    }
    }
   },
-  "viewsContainers":{
-   "activitybar":[{"id":"toolkit","title":"Toolkit","icon":"resources/icon.svg"}]
-  },
-  "views":{
-   "toolkit":[
-    {"id":"manageWorkspace","name":"Manage Workspace"},
-    {"id":"devArea","name":"Development Area","collapsed":true},
-    {"id":"srcExplorer","name":"Source Explorer"},
-    {"id":"scenarioExplorer","name":"Scenarios"},
-    {"id":"configInspector","name":"Config Inspector","type":"webview"}
+  "viewsContainers": {
+   "activitybar": [
+    {
+     "id": "toolkit",
+     "title": "Toolkit",
+     "icon": "resources/icon.svg"
+    }
    ]
   },
-  "commands":[
-   {"command":"scenario.run","title":"Run","icon":"$(play)"},
-   {"command":"scenario.runDebug","title":"Run with Debugger","icon":"$(debug-alt)"},
-   {"command":"scenario.setGlobalRunFlags","title":"Set Global Run Flags","icon":"$(terminal-cmd)"},
-   {"command":"scenario.runSudo","title":"Run with sudo","icon":"$(shield)"},
-   {"command":"scenario.runScreen","title":"Run in detached screen","icon":"$(terminal)"},
-   {"command":"scenario.dup","title":"Duplicate","icon":"$(copy)"},
-   {"command":"scenario.rename","title":"Rename","icon":"$(edit)"},
-   {"command":"scenario.del","title":"Delete","icon":"$(trash)"},
-   {"command":"run.rename","title":"Rename Output Run","icon":"$(edit)"},
-   {"command":"run.del","title":"Delete Output Run","icon":"$(trash)"},
-   {"command":"run.analyze","title":"Analyze Output Run","icon":"$(graph-line)"},
-   {"command":"run.openLog","title":"Open Output Log","icon":"$(output)"},
-   {"command":"run.tags","title":"Set Run Tags","icon":"$(tag)"},
-   {"command":"run.clearTags","title":"Clear Run Tags","icon":"$(clear-all)"},
-   {"command":"run.applySuccessTag","title":"Tag as success","icon":"$(check)"},
-   {"command":"run.applyFailedTag","title":"Tag as failed","icon":"$(error)"},
-   {"command":"tags.manage","title":"Manage Tags","icon":"$(tag)"},
-   {"command":"tags.create","title":"Create Tag","icon":"$(add)"},
-   {"command":"tags.edit","title":"Edit Tag","icon":"$(edit)"},
-   {"command":"tags.delete","title":"Delete Tag","icon":"$(trash)"},
-   {"command":"run.filterByTag","title":"Filter Runs By Tag","icon":"$(filter)"},
-   {"command":"scenario.pin","title":"Pin/Unpin","icon":"$(pin)"},
-   {"command":"scenario.filter","title":"Filter","icon":"$(filter)"},
-   {"command":"scenario.toggleSort","title":"Toggle Scenario Sort","icon":"$(list-ordered)"},
-   {"command":"scenario.toggleRunSort","title":"Toggle Run Sort","icon":"$(history)"},
-   {"command":"scenario.openConfigInspector","title":"Open Config Inspector","icon":"$(symbol-property)"},
-   {"command":"scenario.refresh","title":"Refresh Toolkit","icon":"$(refresh)"},
-   {"command":"scenario.toggleDev","title":"ToggleDev","icon":"$(plus)"},
-   {"command":"workspace.save","title":"Save Workspace","icon":"$(save)"},
-   {"command":"workspace.load","title":"Load Workspace","icon":"$(folder-opened)"},
-   {"command":"workspace.reset","title":"Reset Workspace","icon":"$(discard)"},
-   {"command":"dev.clear","title":"Clear Development Area","icon":"$(clear-all)"},
-   {"command":"dev.remove","title":"Remove From Development Area","icon":"$(close)"}
+  "views": {
+   "toolkit": [
+    {
+     "id": "manageWorkspace",
+     "name": "Manage Workspace"
+    },
+    {
+     "id": "devArea",
+     "name": "Development Area",
+     "collapsed": true
+    },
+    {
+     "id": "srcExplorer",
+     "name": "Source Explorer"
+    },
+    {
+     "id": "scenarioExplorer",
+     "name": "Scenarios"
+    },
+    {
+     "id": "configInspector",
+     "name": "Config Inspector",
+     "type": "webview"
+    }
+   ]
+  },
+  "commands": [
+   {
+    "command": "scenario.run",
+    "title": "Run",
+    "icon": "$(play)"
+   },
+   {
+    "command": "scenario.runDebug",
+    "title": "Run with Debugger",
+    "icon": "$(debug-alt)"
+   },
+   {
+    "command": "scenario.enableSudoExecution",
+    "title": "Enable sudo execution",
+    "icon": "$(shield)"
+   },
+   {
+    "command": "scenario.disableSudoExecution",
+    "title": "Disable sudo execution",
+    "icon": "$(shield)"
+   },
+   {
+    "command": "scenario.setGlobalRunFlags",
+    "title": "Set Global Run Flags",
+    "icon": "$(terminal-cmd)"
+   },
+   {
+    "command": "scenario.runScreen",
+    "title": "Run in detached screen",
+    "icon": "$(terminal)"
+   },
+   {
+    "command": "scenario.dup",
+    "title": "Duplicate",
+    "icon": "$(copy)"
+   },
+   {
+    "command": "scenario.rename",
+    "title": "Rename",
+    "icon": "$(edit)"
+   },
+   {
+    "command": "scenario.del",
+    "title": "Delete",
+    "icon": "$(trash)"
+   },
+   {
+    "command": "run.rename",
+    "title": "Rename Output Run",
+    "icon": "$(edit)"
+   },
+   {
+    "command": "run.del",
+    "title": "Delete Output Run",
+    "icon": "$(trash)"
+   },
+   {
+    "command": "run.analyze",
+    "title": "Analyze Output Run",
+    "icon": "$(graph-line)"
+   },
+   {
+    "command": "run.openLog",
+    "title": "Open Output Log",
+    "icon": "$(output)"
+   },
+   {
+    "command": "run.tags",
+    "title": "Set Run Tags",
+    "icon": "$(tag)"
+   },
+   {
+    "command": "run.clearTags",
+    "title": "Clear Run Tags",
+    "icon": "$(clear-all)"
+   },
+   {
+    "command": "run.applySuccessTag",
+    "title": "Tag as success",
+    "icon": "$(check)"
+   },
+   {
+    "command": "run.applyFailedTag",
+    "title": "Tag as failed",
+    "icon": "$(error)"
+   },
+   {
+    "command": "tags.manage",
+    "title": "Manage Tags",
+    "icon": "$(tag)"
+   },
+   {
+    "command": "tags.create",
+    "title": "Create Tag",
+    "icon": "$(add)"
+   },
+   {
+    "command": "tags.edit",
+    "title": "Edit Tag",
+    "icon": "$(edit)"
+   },
+   {
+    "command": "tags.delete",
+    "title": "Delete Tag",
+    "icon": "$(trash)"
+   },
+   {
+    "command": "run.filterByTag",
+    "title": "Filter Runs By Tag",
+    "icon": "$(filter)"
+   },
+   {
+    "command": "scenario.pin",
+    "title": "Pin/Unpin",
+    "icon": "$(pin)"
+   },
+   {
+    "command": "scenario.filter",
+    "title": "Filter",
+    "icon": "$(filter)"
+   },
+   {
+    "command": "scenario.toggleSort",
+    "title": "Toggle Scenario Sort",
+    "icon": "$(list-ordered)"
+   },
+   {
+    "command": "scenario.toggleRunSort",
+    "title": "Toggle Run Sort",
+    "icon": "$(history)"
+   },
+   {
+    "command": "scenario.openConfigInspector",
+    "title": "Open Config Inspector",
+    "icon": "$(symbol-property)"
+   },
+   {
+    "command": "scenario.refresh",
+    "title": "Refresh Toolkit",
+    "icon": "$(refresh)"
+   },
+   {
+    "command": "scenario.toggleDev",
+    "title": "ToggleDev",
+    "icon": "$(plus)"
+   },
+   {
+    "command": "workspace.save",
+    "title": "Save Workspace",
+    "icon": "$(save)"
+   },
+   {
+    "command": "workspace.load",
+    "title": "Load Workspace",
+    "icon": "$(folder-opened)"
+   },
+   {
+    "command": "workspace.reset",
+    "title": "Reset Workspace",
+    "icon": "$(discard)"
+   },
+   {
+    "command": "dev.clear",
+    "title": "Clear Development Area",
+    "icon": "$(clear-all)"
+   },
+   {
+    "command": "dev.remove",
+    "title": "Remove From Development Area",
+    "icon": "$(close)"
+   }
   ],
-  "menus":{
-   "view/title":[
-    {"command":"workspace.save","when":"view==manageWorkspace","group":"navigation@1"},
-    {"command":"workspace.load","when":"view==manageWorkspace","group":"navigation@2"},
-    {"command":"scenario.refresh","when":"view==manageWorkspace","group":"navigation@3"},
-    {"command":"workspace.reset","when":"view==manageWorkspace","group":"navigation@4"},
-    {"command":"scenario.filter","when":"view==scenarioExplorer","group":"navigation"},
-    {"command":"scenario.toggleSort","when":"view==scenarioExplorer","group":"navigation"},
-    {"command":"scenario.setGlobalRunFlags","when":"view==scenarioExplorer","group":"navigation"},
-    {"command":"tags.manage","when":"view==scenarioExplorer","group":"navigation"},
-    {"command":"dev.clear","when":"view==devArea","group":"navigation"}
+  "menus": {
+   "view/title": [
+    {
+     "command": "workspace.save",
+     "when": "view==manageWorkspace",
+     "group": "navigation@1"
+    },
+    {
+     "command": "workspace.load",
+     "when": "view==manageWorkspace",
+     "group": "navigation@2"
+    },
+    {
+     "command": "scenario.refresh",
+     "when": "view==manageWorkspace",
+     "group": "navigation@3"
+    },
+    {
+     "command": "workspace.reset",
+     "when": "view==manageWorkspace",
+     "group": "navigation@4"
+    },
+    {
+     "command": "scenario.filter",
+     "when": "view==scenarioExplorer",
+     "group": "navigation"
+    },
+    {
+     "command": "scenario.toggleSort",
+     "when": "view==scenarioExplorer",
+     "group": "navigation"
+    },
+    {
+     "command": "scenario.setGlobalRunFlags",
+     "when": "view==scenarioExplorer",
+     "group": "navigation"
+    },
+    {
+     "command": "tags.manage",
+     "when": "view==scenarioExplorer",
+     "group": "navigation"
+    },
+    {
+     "command": "dev.clear",
+     "when": "view==devArea",
+     "group": "navigation"
+    }
    ],
-   "view/item/context":[
-    {"command":"scenario.del","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@1"},
-    {"command":"scenario.rename","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@2"},
-    {"command":"scenario.dup","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@3"},
-    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@5"},
-    {"command":"scenario.run","when":"view==scenarioExplorer && viewItem==scenario","group":"inline@6"},
-
-    {"command":"scenario.del","when":"view==scenarioExplorer && viewItem==scenario","group":"core@1"},
-    {"command":"scenario.rename","when":"view==scenarioExplorer && viewItem==scenario","group":"core@2"},
-    {"command":"scenario.dup","when":"view==scenarioExplorer && viewItem==scenario","group":"core@3"},
-    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==scenario","group":"core@4"},
-    {"command":"scenario.run","when":"view==scenarioExplorer && viewItem==scenario","group":"run@1"},
-    {"command":"scenario.runDebug","when":"view==scenarioExplorer && viewItem==scenario","group":"run@2"},
-    {"command":"scenario.runSudo","when":"view==scenarioExplorer && viewItem==scenario","group":"run@3"},
-    {"command":"scenario.runScreen","when":"view==scenarioExplorer && viewItem==scenario","group":"run@4"},
-
-    {"command":"run.del","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@1"},
-    {"command":"run.rename","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@2"},
-    {"command":"run.openLog","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@3"},
-    {"command":"run.analyze","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@4"},
-    {"command":"run.tags","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@5"},
-    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==ioRun","group":"inline@6"},
-
-    {"command":"run.del","when":"view==scenarioExplorer && viewItem==ioRun","group":"core@1"},
-    {"command":"run.rename","when":"view==scenarioExplorer && viewItem==ioRun","group":"core@2"},
-    {"command":"run.openLog","when":"view==scenarioExplorer && viewItem==ioRun","group":"core@3"},
-    {"command":"run.analyze","when":"view==scenarioExplorer && viewItem==ioRun","group":"core@4"},
-    {"command":"scenario.pin","when":"view==scenarioExplorer && viewItem==ioRun","group":"core@5"},
-    {"command":"run.tags","when":"view==scenarioExplorer && viewItem==ioRun","group":"tags@1"},
-    {"command":"run.applySuccessTag","when":"view==scenarioExplorer && viewItem==ioRun","group":"tags@1"},
-    {"command":"run.applyFailedTag","when":"view==scenarioExplorer && viewItem==ioRun","group":"tags@2"},
-
-    {"command":"run.filterByTag","when":"view==scenarioExplorer && viewItem==ioFolder","group":"inline"},
-    {"command":"scenario.toggleRunSort","when":"view==scenarioExplorer && viewItem==ioFolder","group":"inline"},
-    {"command":"scenario.openConfigInspector","when":"view==scenarioExplorer && viewItem==configsFolder","group":"inline"},
-    {"command":"run.filterByTag","when":"view==scenarioExplorer && viewItem==ioFolder","group":"run@1"},
-    {"command":"scenario.toggleRunSort","when":"view==scenarioExplorer && viewItem==ioFolder","group":"run@2"},
-    {"command":"scenario.openConfigInspector","when":"view==scenarioExplorer && viewItem==configsFolder","group":"run@1"},
-   {"command":"scenario.toggleDev","when":"view==srcExplorer && viewItem==file","group":"inline"},
-   {"command":"scenario.toggleDev","when":"view==srcExplorer && viewItem==file","group":"actions@1"},
-   {"command":"dev.remove","when":"view==devArea && viewItem==devFile","group":"inline"},
-   {"command":"dev.remove","when":"view==devArea && viewItem==devFile","group":"actions@1"}
+   "view/item/context": [
+    {
+     "command": "scenario.del",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "inline@1"
+    },
+    {
+     "command": "scenario.rename",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "inline@2"
+    },
+    {
+     "command": "scenario.dup",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "inline@3"
+    },
+    {
+     "command": "scenario.pin",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "inline@5"
+    },
+    {
+     "command": "scenario.run",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "inline@6"
+    },
+    {
+     "command": "scenario.enableSudoExecution",
+     "when": "view==scenarioExplorer && viewItem==scenario && !scenarioToolkit.sudoEnabled",
+     "group": "inline@7"
+    },
+    {
+     "command": "scenario.disableSudoExecution",
+     "when": "view==scenarioExplorer && viewItem==scenario && scenarioToolkit.sudoEnabled",
+     "group": "inline@7"
+    },
+    {
+     "command": "scenario.del",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "core@1"
+    },
+    {
+     "command": "scenario.rename",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "core@2"
+    },
+    {
+     "command": "scenario.dup",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "core@3"
+    },
+    {
+     "command": "scenario.pin",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "core@4"
+    },
+    {
+     "command": "scenario.run",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "run@1"
+    },
+    {
+     "command": "scenario.runDebug",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "run@2"
+    },
+    {
+     "command": "scenario.runScreen",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "run@3"
+    },
+    {
+     "command": "scenario.enableSudoExecution",
+     "when": "view==scenarioExplorer && viewItem==scenario && !scenarioToolkit.sudoEnabled",
+     "group": "run@9"
+    },
+    {
+     "command": "scenario.disableSudoExecution",
+     "when": "view==scenarioExplorer && viewItem==scenario && scenarioToolkit.sudoEnabled",
+     "group": "run@9"
+    },
+    {
+     "command": "run.del",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "inline@1"
+    },
+    {
+     "command": "run.rename",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "inline@2"
+    },
+    {
+     "command": "run.openLog",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "inline@3"
+    },
+    {
+     "command": "run.analyze",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "inline@4"
+    },
+    {
+     "command": "run.tags",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "inline@5"
+    },
+    {
+     "command": "scenario.pin",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "inline@6"
+    },
+    {
+     "command": "run.del",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "core@1"
+    },
+    {
+     "command": "run.rename",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "core@2"
+    },
+    {
+     "command": "run.openLog",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "core@3"
+    },
+    {
+     "command": "run.analyze",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "core@4"
+    },
+    {
+     "command": "scenario.pin",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "core@5"
+    },
+    {
+     "command": "run.tags",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "tags@1"
+    },
+    {
+     "command": "run.applySuccessTag",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "tags@1"
+    },
+    {
+     "command": "run.applyFailedTag",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "tags@2"
+    },
+    {
+     "command": "run.filterByTag",
+     "when": "view==scenarioExplorer && viewItem==ioFolder",
+     "group": "inline"
+    },
+    {
+     "command": "scenario.toggleRunSort",
+     "when": "view==scenarioExplorer && viewItem==ioFolder",
+     "group": "inline"
+    },
+    {
+     "command": "scenario.openConfigInspector",
+     "when": "view==scenarioExplorer && viewItem==configsFolder",
+     "group": "inline"
+    },
+    {
+     "command": "run.filterByTag",
+     "when": "view==scenarioExplorer && viewItem==ioFolder",
+     "group": "run@1"
+    },
+    {
+     "command": "scenario.toggleRunSort",
+     "when": "view==scenarioExplorer && viewItem==ioFolder",
+     "group": "run@2"
+    },
+    {
+     "command": "scenario.openConfigInspector",
+     "when": "view==scenarioExplorer && viewItem==configsFolder",
+     "group": "run@1"
+    },
+    {
+     "command": "scenario.toggleDev",
+     "when": "view==srcExplorer && viewItem==file",
+     "group": "inline"
+    },
+    {
+     "command": "scenario.toggleDev",
+     "when": "view==srcExplorer && viewItem==file",
+     "group": "actions@1"
+    },
+    {
+     "command": "dev.remove",
+     "when": "view==devArea && viewItem==devFile",
+     "group": "inline"
+    },
+    {
+     "command": "dev.remove",
+     "when": "view==devArea && viewItem==devFile",
+     "group": "actions@1"
+    }
    ],
-   "commandPalette":[
-    {"command":"workspace.save","when":"true"},
-    {"command":"workspace.load","when":"true"},
-    {"command":"scenario.refresh","when":"true"},
-    {"command":"workspace.reset","when":"true"}
+   "commandPalette": [
+    {
+     "command": "workspace.save",
+     "when": "true"
+    },
+    {
+     "command": "workspace.load",
+     "when": "true"
+    },
+    {
+     "command": "scenario.refresh",
+     "when": "true"
+    },
+    {
+     "command": "workspace.reset",
+     "when": "true"
+    }
    ]
   },
-  "configurationDefaults":{
-   "workbench.list.showActionsOnHover":false
+  "configurationDefaults": {
+   "workbench.list.showActionsOnHover": false
   }
  },
- "scripts":{"compile":"tsc -p ./"},
- "dependencies":{
-  "@vscode/codicons":"^0.0.36",
-  "fast-xml-parser":"^4.5.0"
+ "scripts": {
+  "compile": "tsc -p ./"
  },
- "devDependencies":{
-  "typescript":"^5",
-  "@types/vscode":"^1.85.0",
-  "@types/node":"^18",
-  "@types/mocha":"^10.0.10"
+ "dependencies": {
+  "@vscode/codicons": "^0.0.36",
+  "fast-xml-parser": "^4.5.0"
+ },
+ "devDependencies": {
+  "@types/mocha": "^10.0.10",
+  "@types/node": "^18",
+  "@types/vscode": "^1.85.0",
+  "@vscode/vsce": "^3.7.1",
+  "typescript": "^5"
  }
 }

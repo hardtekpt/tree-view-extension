@@ -1,10 +1,12 @@
 import * as fs from 'fs';
+import * as net from 'net';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import * as vscode from 'vscode';
-import { getBasePath, getPythonCommand, getRunScript, getScenarioPath } from '../config';
+import { getBasePath, getRunScript, getScenarioPath } from '../config';
 import {
     CONFIG_ROOT,
+    DEFAULTS,
     FILE_EXTENSIONS,
     FOLDER_NAMES,
     PYTHON_CONFIG_ROOT,
@@ -43,14 +45,23 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private readonly runTagsByPath = new Map<string, string[]>();
     private readonly runFilterTagIdsByScenario = new Map<string, string[]>();
     private globalRunFlags = '';
+    private sudoExecutionEnabled = false;
 
     constructor(private readonly state: vscode.Memento) {
         this.loadState();
         this.ensureDefaultTags();
+        this.updateSudoContextKey();
     }
 
     refresh(): void {
         this.changeEmitter.fire();
+    }
+
+    async syncPythonInterpreterForBasePath(): Promise<void> {
+        const basePath = getBasePath();
+        const pythonPath =
+            basePath && existsDir(basePath) ? (findPythonInBasePath(basePath) ?? DEFAULTS.pythonCommand) : DEFAULTS.pythonCommand;
+        await this.updatePythonConfiguration(pythonPath);
     }
 
     dispose(): void {
@@ -74,7 +85,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             tagCatalog: [...this.tagCatalog.values()],
             runTagsByPath: Object.fromEntries(this.runTagsByPath.entries()),
             runFilterTagIdsByScenario: Object.fromEntries(this.runFilterTagIdsByScenario.entries()),
-            globalRunFlags: this.globalRunFlags
+            globalRunFlags: this.globalRunFlags,
+            sudoExecutionEnabled: this.sudoExecutionEnabled
         };
     }
 
@@ -120,6 +132,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             }
         }
         this.globalRunFlags = normalizeRunFlags(next.globalRunFlags ?? '');
+        this.sudoExecutionEnabled = Boolean(next.sudoExecutionEnabled);
+        this.updateSudoContextKey();
 
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
@@ -135,6 +149,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             Object.fromEntries(this.runFilterTagIdsByScenario.entries())
         );
         void this.state.update(SCENARIO_STORAGE_KEYS.globalRunFlags, this.globalRunFlags);
+        void this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, this.sudoExecutionEnabled);
         this.refresh();
     }
 
@@ -156,6 +171,14 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         this.globalRunFlags = normalized;
         void this.state.update(SCENARIO_STORAGE_KEYS.globalRunFlags, this.globalRunFlags);
         this.refresh();
+    }
+
+    async enableSudoExecution(): Promise<void> {
+        await this.setSudoExecution(true);
+    }
+
+    async disableSudoExecution(): Promise<void> {
+        await this.setSudoExecution(false);
     }
 
     // Scenario and io-run pinning share one command and branch by node type.
@@ -685,28 +708,27 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         );
     }
 
-    // Run scenario immediately in the local process, optionally wrapped in sudo.
-    async run(uri: vscode.Uri, withSudo = false): Promise<void> {
+    // Run scenario immediately in the local process.
+    async run(uri: vscode.Uri): Promise<void> {
         const basePath = getBasePath();
         if (!basePath || !existsDir(basePath)) {
             void vscode.window.showWarningMessage(`Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`);
             return;
         }
 
-        const detectedPython = await this.configurePythonFromLocalVenv(basePath);
-        const python = detectedPython ?? getPythonCommand();
+        const python = await this.configurePythonFromLocalVenv(basePath);
         const runScript = getRunScript();
         const scenarioName = path.basename(uri.fsPath);
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
         const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
-        const effectiveCommand = withSudo && process.platform !== 'win32' ? 'sudo' : python;
-        const effectiveArgs = withSudo && process.platform !== 'win32' ? [python, ...args] : args;
-        const command = `${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`;
-
-        if (withSudo && process.platform === 'win32') {
-            void vscode.window.showWarningMessage('Sudo is not available on Windows. Running scenario without sudo.');
+        const useSudo = await this.resolveSudoUsage(basePath);
+        if (useSudo === undefined) {
+            return;
         }
 
+        const effectiveCommand = useSudo ? 'sudo' : python;
+        const effectiveArgs = useSudo ? ['-n', python, ...args] : args;
+        const command = `${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`;
         this.output.appendLine(`[run] ${command}`);
 
         const child = spawn(effectiveCommand, effectiveArgs, { cwd: basePath });
@@ -735,11 +757,68 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return;
         }
 
-        const detectedPython = await this.configurePythonFromLocalVenv(basePath);
-        const python = detectedPython ?? getPythonCommand();
+        const python = await this.configurePythonFromLocalVenv(basePath);
         const runScript = getRunScript();
         const scenarioName = path.basename(uri.fsPath);
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
+        const useSudo = await this.resolveSudoUsage(basePath);
+        if (useSudo === undefined) {
+            return;
+        }
+
+        if (useSudo) {
+            const program = path.isAbsolute(runScript) ? runScript : path.join(basePath, runScript);
+            const port = await this.allocateDebugPort();
+            const debugArgs = [
+                '-m',
+                'debugpy',
+                '--listen',
+                `127.0.0.1:${port}`,
+                '--wait-for-client',
+                program,
+                RUNTIME_ARGS.scenarioFlag,
+                scenarioName,
+                ...extraFlags
+            ];
+            this.output.appendLine(`[run-debug-sudo] sudo -n ${[python, ...debugArgs].map(quoteIfNeeded).join(' ')}`);
+
+            const child = spawn('sudo', ['-n', python, ...debugArgs], { cwd: basePath });
+            child.stdout.on('data', chunk => this.output.append(String(chunk)));
+            child.stderr.on('data', chunk => this.output.append(String(chunk)));
+            child.on('error', error => {
+                this.output.appendLine(`[error] ${error.message}`);
+                void vscode.window.showErrorMessage(`Scenario debug run failed: ${error.message}`);
+            });
+            child.on('close', code => {
+                this.output.appendLine(`[debug-sudo-exit] code=${code ?? 'unknown'}`);
+                this.output.show(true);
+                if (code !== 0) {
+                    void vscode.window.showWarningMessage(`Scenario debug process exited with code ${code ?? 'unknown'}.`);
+                }
+            });
+
+            const ready = await this.waitForDebugServer(port, 10000);
+            if (!ready) {
+                child.kill();
+                void vscode.window.showErrorMessage('Timed out waiting for sudo debug server to start.');
+                return;
+            }
+
+            const started = await vscode.debug.startDebugging(undefined, {
+                type: 'python',
+                request: 'attach',
+                name: `Run Scenario (sudo): ${scenarioName}`,
+                connect: { host: '127.0.0.1', port },
+                pathMappings: [{ localRoot: basePath, remoteRoot: basePath }],
+                justMyCode: false
+            });
+            if (!started) {
+                child.kill();
+                void vscode.window.showErrorMessage('Could not attach debugger for this sudo scenario run.');
+            }
+            return;
+        }
+
         const debugConfiguration: vscode.DebugConfiguration = {
             type: 'python',
             request: 'launch',
@@ -768,23 +847,29 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return;
         }
 
+        const python = await this.configurePythonFromLocalVenv(basePath);
+        const runScript = getRunScript();
+        const scenarioName = path.basename(uri.fsPath);
+        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
+        const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
+        const useSudo = await this.resolveSudoUsage(basePath);
+        if (useSudo === undefined) {
+            return;
+        }
+
         if (process.platform === 'win32') {
             void vscode.window.showWarningMessage('Detached screen sessions are not available on Windows.');
             return;
         }
 
-        const detectedPython = await this.configurePythonFromLocalVenv(basePath);
-        const python = detectedPython ?? getPythonCommand();
-        const runScript = getRunScript();
-        const scenarioName = path.basename(uri.fsPath);
-        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
-        const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
         const sessionName = buildScreenSessionName(scenarioName);
         const screenArgs = ['-dmS', sessionName, python, ...args];
+        const effectiveCommand = useSudo ? 'sudo' : 'screen';
+        const effectiveArgs = useSudo ? ['-n', 'screen', ...screenArgs] : screenArgs;
 
-        this.output.appendLine(`[run-screen] screen ${screenArgs.map(quoteIfNeeded).join(' ')}`);
+        this.output.appendLine(`[run-screen] ${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`);
 
-        const child = spawn('screen', screenArgs, { cwd: basePath });
+        const child = spawn(effectiveCommand, effectiveArgs, { cwd: basePath });
         child.stderr.on('data', chunk => this.output.append(String(chunk)));
         child.on('error', error => {
             this.output.appendLine(`[error] ${error.message}`);
@@ -806,15 +891,114 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
     }
 
-    // Detect venv interpreter and keep toolkit/python extension settings aligned.
-    private async configurePythonFromLocalVenv(basePath: string): Promise<string | undefined> {
-        const pythonPath = findPythonInBasePath(basePath);
-        if (!pythonPath) {
-            return undefined;
+    private async resolveSudoUsage(basePath: string): Promise<boolean | undefined> {
+        if (!this.sudoExecutionEnabled) {
+            return false;
         }
 
+        if (process.platform === 'win32') {
+            this.sudoExecutionEnabled = false;
+            this.updateSudoContextKey();
+            void this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, false);
+            void vscode.window.showWarningMessage('Sudo is not available on Windows.');
+            return false;
+        }
+
+        const authenticated = await this.ensureSudoSession(basePath);
+        return authenticated ? true : undefined;
+    }
+
+    private async ensureSudoSession(basePath: string): Promise<boolean> {
+        if (await this.hasActiveSudoSession(basePath)) {
+            return true;
+        }
+
+        const password = await vscode.window.showInputBox({
+            prompt: 'Enter sudo password for scenario execution',
+            password: true,
+            ignoreFocusOut: true
+        });
+        if (password === undefined) {
+            return false;
+        }
+
+        const validated = await this.validateSudoPassword(basePath, password);
+        if (!validated) {
+            void vscode.window.showErrorMessage('Sudo authentication failed. Execution cancelled.');
+            return false;
+        }
+        return true;
+    }
+
+    private hasActiveSudoSession(basePath: string): Promise<boolean> {
+        return new Promise(resolve => {
+            const child = spawn('sudo', ['-n', 'true'], { cwd: basePath });
+            child.on('error', () => resolve(false));
+            child.on('close', code => resolve(code === 0));
+        });
+    }
+
+    private validateSudoPassword(basePath: string, password: string): Promise<boolean> {
+        return new Promise(resolve => {
+            const child = spawn('sudo', ['-S', '-v'], { cwd: basePath, stdio: ['pipe', 'pipe', 'pipe'] });
+            child.stdin.write(`${password}\n`);
+            child.stdin.end();
+            child.on('error', () => resolve(false));
+            child.on('close', code => resolve(code === 0));
+        });
+    }
+
+    private allocateDebugPort(): Promise<number> {
+        return new Promise((resolve, reject) => {
+            const server = net.createServer();
+            server.listen(0, '127.0.0.1', () => {
+                const address = server.address();
+                if (!address || typeof address === 'string') {
+                    server.close();
+                    reject(new Error('Could not allocate debug port.'));
+                    return;
+                }
+                const port = address.port;
+                server.close(error => (error ? reject(error) : resolve(port)));
+            });
+            server.on('error', reject);
+        });
+    }
+
+    private waitForDebugServer(port: number, timeoutMs: number): Promise<boolean> {
+        const start = Date.now();
+
+        return new Promise(resolve => {
+            const tryConnect = (): void => {
+                const socket = net.connect({ host: '127.0.0.1', port }, () => {
+                    socket.end();
+                    resolve(true);
+                });
+
+                socket.on('error', () => {
+                    socket.destroy();
+                    if (Date.now() - start >= timeoutMs) {
+                        resolve(false);
+                        return;
+                    }
+                    setTimeout(tryConnect, 150);
+                });
+            };
+
+            tryConnect();
+        });
+    }
+
+    // Detect venv interpreter and keep toolkit/python extension settings aligned.
+    private async configurePythonFromLocalVenv(basePath: string): Promise<string> {
+        const pythonPath = findPythonInBasePath(basePath) ?? DEFAULTS.pythonCommand;
+        await this.updatePythonConfiguration(pythonPath);
+        return pythonPath;
+    }
+
+    private async updatePythonConfiguration(pythonPath: string): Promise<void> {
         const toolkitConfig = vscode.workspace.getConfiguration(CONFIG_ROOT);
-        const currentToolkitPython = toolkitConfig.get<string>(SETTINGS_KEYS.pythonCommand, getPythonCommand());
+        const currentToolkitPython = toolkitConfig.get<string>(SETTINGS_KEYS.pythonCommand, DEFAULTS.pythonCommand);
         if (currentToolkitPython !== pythonPath) {
             await safeUpdateConfiguration(toolkitConfig, SETTINGS_KEYS.pythonCommand, pythonPath);
         }
@@ -824,8 +1008,6 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         if (currentInterpreter !== pythonPath) {
             await safeUpdateConfiguration(pythonExtensionConfig, SETTINGS_KEYS.pythonDefaultInterpreterPath, pythonPath);
         }
-
-        return pythonPath;
     }
 
     // Duplicate scenario folder while intentionally clearing copied output runs.
@@ -1090,6 +1272,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             }
         }
         this.globalRunFlags = normalizeRunFlags(this.state.get<string>(SCENARIO_STORAGE_KEYS.globalRunFlags, ''));
+        this.sudoExecutionEnabled = this.state.get<boolean>(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, false);
 
         this.scenarioSortMode = this.state.get<SortMode>(SCENARIO_STORAGE_KEYS.scenarioSort, 'name');
         const byScenario = this.state.get<Record<string, ScenarioRunSortMode>>(
@@ -1102,11 +1285,15 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     }
 
     private applyScenarioHover(node: ScenarioNode): void {
-        if (!this.globalRunFlags) {
+        if (!this.globalRunFlags && !this.sudoExecutionEnabled) {
             node.tooltip = undefined;
             return;
         }
-        node.tooltip = `Global run flags: ${this.globalRunFlags}`;
+        const details = [
+            `Sudo mode: ${this.sudoExecutionEnabled ? 'On' : 'Off'}`,
+            this.globalRunFlags ? `Global run flags: ${this.globalRunFlags}` : undefined
+        ].filter(Boolean);
+        node.tooltip = details.join('\n');
     }
 
     private persistTagState(): void {
@@ -1183,5 +1370,26 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         this.tagCatalog.set(id, tag);
         this.persistTagState();
         return tag;
+    }
+
+    private updateSudoContextKey(): void {
+        void vscode.commands.executeCommand('setContext', 'scenarioToolkit.sudoEnabled', this.sudoExecutionEnabled);
+    }
+
+    private async setSudoExecution(enabled: boolean): Promise<void> {
+        if (enabled && process.platform === 'win32') {
+            this.sudoExecutionEnabled = false;
+            this.updateSudoContextKey();
+            void this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, false);
+            void vscode.window.showWarningMessage('Sudo is not available on Windows.');
+            return;
+        }
+
+        this.sudoExecutionEnabled = enabled;
+        this.updateSudoContextKey();
+        await this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, this.sudoExecutionEnabled);
+        void vscode.window.showInformationMessage(
+            `Scenario execution mode: ${this.sudoExecutionEnabled ? 'sudo enabled' : 'sudo disabled'}`
+        );
     }
 }

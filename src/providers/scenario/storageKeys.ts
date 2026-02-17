@@ -9,5 +9,6 @@ export const SCENARIO_STORAGE_KEYS = {
     tagCatalog: STORAGE_KEYS.tagCatalog,
     runTagsByPath: STORAGE_KEYS.runTagsByPath,
     runFilterTagIdsByScenario: STORAGE_KEYS.runFilterTagIdsByScenario,
-    globalRunFlags: STORAGE_KEYS.globalRunFlags
+    globalRunFlags: STORAGE_KEYS.globalRunFlags,
+    sudoExecutionEnabled: STORAGE_KEYS.sudoExecutionEnabled
 } as const;

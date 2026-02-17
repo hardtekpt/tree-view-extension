@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getBasePath, getScenarioPath } from './config';
-import { CONFIG_ROOT, TREE_COMMANDS, VIEW_IDS } from './constants';
+import { CONFIG_ROOT, SETTINGS_KEYS, TREE_COMMANDS, VIEW_IDS } from './constants';
 import { registerCommands } from './commands/registerCommands';
 import { ConfigInspectorProvider } from './configInspector/configInspectorProvider';
 import { createWatchers } from './extension/watchers';
@@ -107,6 +107,15 @@ export function activate(context: vscode.ExtensionContext): void {
         scenarioProvider.refresh();
     };
 
+    const syncPythonInterpreter = () => {
+        void scenarioProvider.syncPythonInterpreterForBasePath().catch(error => {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showWarningMessage(`Could not update Python interpreter configuration: ${message}`);
+        });
+    };
+
+    syncPythonInterpreter();
+
     registerCommands(context, { devProvider, scenarioProvider }, {
         refreshToolkit,
         saveWorkspace: () => workspaceManager.save(),
@@ -124,6 +133,10 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.workspace.onDidChangeConfiguration(event => {
             if (!event.affectsConfiguration(CONFIG_ROOT)) {
                 return;
+            }
+
+            if (event.affectsConfiguration(`${CONFIG_ROOT}.${SETTINGS_KEYS.basePath}`)) {
+                syncPythonInterpreter();
             }
 
             refreshToolkit();

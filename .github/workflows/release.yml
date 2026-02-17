@@ -1,0 +1,55 @@
+name: VSCode Extension Release
+
+on:
+  push:
+    tags:
+      - "v*"      # triggers on version tags like v1.2.0
+
+jobs:
+  build-release:
+    runs-on: [self-hosted, linux, vsix]
+
+    steps:
+      # Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Setup Node
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      # ----------------------------
+      # Packaging Steps (Your Spec)
+      # ----------------------------
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Install vsce
+        run: npm i -D @vscode/vsce
+
+      - name: Create VSIX
+        run: npx @vscode/vsce package
+
+      # Capture filename
+      - name: Get VSIX filename
+        id: vsix
+        run: |
+          FILE=$(ls *.vsix)
+          echo "file=$FILE" >> $GITHUB_OUTPUT
+
+      # ----------------------------
+      # Create GitHub Release
+      # ----------------------------
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.vsix.outputs.file }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
