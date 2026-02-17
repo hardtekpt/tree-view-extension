@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"      # triggers on version tags like v1.2.0
 
+permissions:
+  contents: write
+
+
 jobs:
   build-release:
     runs-on: [self-hosted, linux, vsix]
