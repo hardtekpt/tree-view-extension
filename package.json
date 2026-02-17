@@ -77,13 +77,8 @@
     "icon": "$(debug-alt)"
    },
    {
-    "command": "scenario.enableSudoExecution",
-    "title": "Enable sudo execution",
-    "icon": "$(shield)"
-   },
-   {
-    "command": "scenario.disableSudoExecution",
-    "title": "Disable sudo execution",
+    "command": "scenario.toggleSudoExecution",
+    "title": "Toggle sudo execution",
     "icon": "$(shield)"
    },
    {
@@ -312,13 +307,8 @@
      "group": "inline@6"
     },
     {
-     "command": "scenario.enableSudoExecution",
-     "when": "view==scenarioExplorer && viewItem==scenario && !scenarioToolkit.sudoEnabled",
-     "group": "inline@7"
-    },
-    {
-     "command": "scenario.disableSudoExecution",
-     "when": "view==scenarioExplorer && viewItem==scenario && scenarioToolkit.sudoEnabled",
+     "command": "scenario.toggleSudoExecution",
+     "when": "view==scenarioExplorer && viewItem==scenario",
      "group": "inline@7"
     },
     {
@@ -357,13 +347,8 @@
      "group": "run@3"
     },
     {
-     "command": "scenario.enableSudoExecution",
-     "when": "view==scenarioExplorer && viewItem==scenario && !scenarioToolkit.sudoEnabled",
-     "group": "run@9"
-    },
-    {
-     "command": "scenario.disableSudoExecution",
-     "when": "view==scenarioExplorer && viewItem==scenario && scenarioToolkit.sudoEnabled",
+     "command": "scenario.toggleSudoExecution",
+     "when": "view==scenarioExplorer && viewItem==scenario",
      "group": "run@9"
     },
     {

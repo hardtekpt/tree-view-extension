@@ -82,11 +82,22 @@ export function activate(context: vscode.ExtensionContext): void {
     };
 
     const workspaceManager = new WorkspaceManager(
+        context.workspaceState,
         devProvider,
         scenarioProvider,
         getTreeViewState,
         applyTreeViewState
     );
+
+    let defaultWorkspaceSaveTimer: NodeJS.Timeout | undefined;
+    const scheduleDefaultWorkspaceSave = () => {
+        if (defaultWorkspaceSaveTimer) {
+            clearTimeout(defaultWorkspaceSaveTimer);
+        }
+        defaultWorkspaceSaveTimer = setTimeout(() => {
+            workspaceManager.persistDefaultWorkspace();
+        }, 250);
+    };
 
     context.subscriptions.push(
         manageWorkspaceTree,
@@ -105,6 +116,7 @@ export function activate(context: vscode.ExtensionContext): void {
         watcherState.rebuild(getBasePath(), getScenarioPath());
         srcProvider.refresh();
         scenarioProvider.refresh();
+        scheduleDefaultWorkspaceSave();
     };
 
     const syncPythonInterpreter = () => {
@@ -115,6 +127,7 @@ export function activate(context: vscode.ExtensionContext): void {
     };
 
     syncPythonInterpreter();
+    workspaceManager.initialize();
 
     registerCommands(context, { devProvider, scenarioProvider }, {
         refreshToolkit,
@@ -130,6 +143,17 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
     context.subscriptions.push(
+        new vscode.Disposable(() => {
+            if (defaultWorkspaceSaveTimer) {
+                clearTimeout(defaultWorkspaceSaveTimer);
+            }
+        }),
+        devProvider.onDidChangeTreeData(() => scheduleDefaultWorkspaceSave()),
+        scenarioProvider.onDidChangeTreeData(() => scheduleDefaultWorkspaceSave()),
+        srcTree.onDidExpandElement(() => scheduleDefaultWorkspaceSave()),
+        srcTree.onDidCollapseElement(() => scheduleDefaultWorkspaceSave()),
+        scenarioTree.onDidExpandElement(() => scheduleDefaultWorkspaceSave()),
+        scenarioTree.onDidCollapseElement(() => scheduleDefaultWorkspaceSave()),
         vscode.workspace.onDidChangeConfiguration(event => {
             if (!event.affectsConfiguration(CONFIG_ROOT)) {
                 return;

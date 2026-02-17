@@ -10,6 +10,7 @@ export type ScenarioRunSortMode = 'name' | 'recent';
 // Tree item model shared across scenario folders, runs, and files.
 export class ScenarioNode extends vscode.TreeItem {
     public readonly isPinned: boolean;
+    public readonly isSudoEnabled: boolean;
     public readonly scenarioRootPath?: string;
 
     constructor(
@@ -19,11 +20,13 @@ export class ScenarioNode extends vscode.TreeItem {
         label?: string,
         isPinned = false,
         scenarioRootPath?: string,
-        _runSortMode?: ScenarioRunSortMode
+        _runSortMode?: ScenarioRunSortMode,
+        isSudoEnabled = false
     ) {
         super(label ?? path.basename(uri.fsPath), collapsibleState);
 
         this.isPinned = isPinned;
+        this.isSudoEnabled = isSudoEnabled;
         this.scenarioRootPath = scenarioRootPath;
         this.resourceUri = uri;
         this.contextValue = type;
@@ -66,6 +69,8 @@ export class ScenarioNode extends vscode.TreeItem {
         if (type === 'scenario') {
             if (isPinned) {
                 this.iconPath = new vscode.ThemeIcon('pinned');
+            } else if (isSudoEnabled) {
+                this.iconPath = new vscode.ThemeIcon('shield');
             }
             return;
         }

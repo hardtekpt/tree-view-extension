@@ -9,6 +9,10 @@ export function getWorkspaceConfigPath(basePath: string): string {
     return path.join(basePath, FOLDER_NAMES.toolkitStateDir, FILE_NAMES.workspaceConfig);
 }
 
+export function getDefaultWorkspaceConfigPath(basePath: string): string {
+    return getWorkspaceConfigPath(basePath);
+}
+
 // Pick the initial location used by save/load dialogs.
 export async function getInitialWorkspaceUri(): Promise<vscode.Uri | undefined> {
     const basePath = getBasePath();

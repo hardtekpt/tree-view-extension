@@ -45,12 +45,11 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private readonly runTagsByPath = new Map<string, string[]>();
     private readonly runFilterTagIdsByScenario = new Map<string, string[]>();
     private globalRunFlags = '';
-    private sudoExecutionEnabled = false;
+    private readonly sudoExecutionByScenario = new Map<string, boolean>();
 
     constructor(private readonly state: vscode.Memento) {
         this.loadState();
         this.ensureDefaultTags();
-        this.updateSudoContextKey();
     }
 
     refresh(): void {
@@ -86,7 +85,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             runTagsByPath: Object.fromEntries(this.runTagsByPath.entries()),
             runFilterTagIdsByScenario: Object.fromEntries(this.runFilterTagIdsByScenario.entries()),
             globalRunFlags: this.globalRunFlags,
-            sudoExecutionEnabled: this.sudoExecutionEnabled
+            sudoExecutionByScenario: Object.fromEntries(this.sudoExecutionByScenario.entries())
         };
     }
 
@@ -132,8 +131,12 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             }
         }
         this.globalRunFlags = normalizeRunFlags(next.globalRunFlags ?? '');
-        this.sudoExecutionEnabled = Boolean(next.sudoExecutionEnabled);
-        this.updateSudoContextKey();
+        this.sudoExecutionByScenario.clear();
+        for (const [scenarioPath, enabled] of Object.entries(next.sudoExecutionByScenario ?? {})) {
+            if (enabled) {
+                this.sudoExecutionByScenario.set(toPathKey(scenarioPath), true);
+            }
+        }
 
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
@@ -149,7 +152,10 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             Object.fromEntries(this.runFilterTagIdsByScenario.entries())
         );
         void this.state.update(SCENARIO_STORAGE_KEYS.globalRunFlags, this.globalRunFlags);
-        void this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, this.sudoExecutionEnabled);
+        void this.state.update(
+            SCENARIO_STORAGE_KEYS.sudoExecutionByScenario,
+            Object.fromEntries(this.sudoExecutionByScenario.entries())
+        );
         this.refresh();
     }
 
@@ -173,12 +179,13 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         this.refresh();
     }
 
-    async enableSudoExecution(): Promise<void> {
-        await this.setSudoExecution(true);
-    }
-
-    async disableSudoExecution(): Promise<void> {
-        await this.setSudoExecution(false);
+    async toggleSudoExecution(target: { uri: vscode.Uri }): Promise<void> {
+        const scenarioPath = this.resolveScenarioPathFromTarget(target.uri);
+        if (!scenarioPath) {
+            return;
+        }
+        const enabled = !this.isSudoEnabledForScenario(scenarioPath);
+        await this.setSudoExecutionForScenario(vscode.Uri.file(scenarioPath), enabled);
     }
 
     // Scenario and io-run pinning share one command and branch by node type.
@@ -498,6 +505,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 .map(full => {
                     const normalized = toPathKey(full);
                     const isPinned = this.pinnedScenarios.has(normalized);
+                    const isSudoEnabled = this.isSudoEnabledForScenario(full);
                     const runSortMode = this.runSortByScenario.get(normalized) ?? 'name';
                     const node = new ScenarioNode(
                         vscode.Uri.file(full),
@@ -506,7 +514,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                         undefined,
                         isPinned,
                         full,
-                        runSortMode
+                        runSortMode,
+                        isSudoEnabled
                     );
                     this.applyScenarioHover(node);
                     return node;
@@ -652,6 +661,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const parentPath = path.dirname(fsPath);
         if (toPathKey(parentPath) === normalizedRoot) {
             const isPinned = this.pinnedScenarios.has(normalizedPath);
+            const isSudoEnabled = this.isSudoEnabledForScenario(fsPath);
             const runSortMode = this.runSortByScenario.get(normalizedPath) ?? 'name';
             const node = new ScenarioNode(
                 vscode.Uri.file(fsPath),
@@ -660,7 +670,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 undefined,
                 isPinned,
                 fsPath,
-                runSortMode
+                runSortMode,
+                isSudoEnabled
             );
             this.applyScenarioHover(node);
             return node;
@@ -721,7 +732,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const scenarioName = path.basename(uri.fsPath);
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
         const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
-        const useSudo = await this.resolveSudoUsage(basePath);
+        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
         if (useSudo === undefined) {
             return;
         }
@@ -761,12 +772,17 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const runScript = getRunScript();
         const scenarioName = path.basename(uri.fsPath);
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
-        const useSudo = await this.resolveSudoUsage(basePath);
+        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
         if (useSudo === undefined) {
             return;
         }
 
         if (useSudo) {
+            const debugpyReady = await this.ensureDebugpyAvailable(python, basePath);
+            if (!debugpyReady) {
+                return;
+            }
+
             const program = path.isAbsolute(runScript) ? runScript : path.join(basePath, runScript);
             const port = await this.allocateDebugPort();
             const debugArgs = [
@@ -852,7 +868,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const scenarioName = path.basename(uri.fsPath);
         const extraFlags = parseCommandLineArgs(this.globalRunFlags);
         const args = [runScript, RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags];
-        const useSudo = await this.resolveSudoUsage(basePath);
+        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
         if (useSudo === undefined) {
             return;
         }
@@ -891,15 +907,17 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
     }
 
-    private async resolveSudoUsage(basePath: string): Promise<boolean | undefined> {
-        if (!this.sudoExecutionEnabled) {
+    private async resolveSudoUsage(basePath: string, scenarioPath: string): Promise<boolean | undefined> {
+        if (!this.isSudoEnabledForScenario(scenarioPath)) {
             return false;
         }
 
         if (process.platform === 'win32') {
-            this.sudoExecutionEnabled = false;
-            this.updateSudoContextKey();
-            void this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, false);
+            this.sudoExecutionByScenario.delete(toPathKey(scenarioPath));
+            void this.state.update(
+                SCENARIO_STORAGE_KEYS.sudoExecutionByScenario,
+                Object.fromEntries(this.sudoExecutionByScenario.entries())
+            );
             void vscode.window.showWarningMessage('Sudo is not available on Windows.');
             return false;
         }
@@ -986,6 +1004,55 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             };
 
             tryConnect();
+        });
+    }
+
+    private async ensureDebugpyAvailable(pythonPath: string, basePath: string): Promise<boolean> {
+        const hasDebugpy = await this.pythonCanImportModule(pythonPath, 'debugpy', basePath);
+        if (hasDebugpy) {
+            return true;
+        }
+
+        const choice = await vscode.window.showWarningMessage(
+            `The selected Python environment is missing 'debugpy'. Install it now for sudo debugging?`,
+            'Install',
+            'Cancel'
+        );
+        if (choice !== 'Install') {
+            return false;
+        }
+
+        const installed = await this.installDebugpy(pythonPath, basePath);
+        if (!installed) {
+            void vscode.window.showErrorMessage(`Could not install debugpy in '${pythonPath}'.`);
+            return false;
+        }
+
+        const nowAvailable = await this.pythonCanImportModule(pythonPath, 'debugpy', basePath);
+        if (!nowAvailable) {
+            void vscode.window.showErrorMessage(`debugpy still not available in '${pythonPath}' after install.`);
+            return false;
+        }
+
+        return true;
+    }
+
+    private pythonCanImportModule(pythonPath: string, moduleName: string, basePath: string): Promise<boolean> {
+        return new Promise(resolve => {
+            const child = spawn(pythonPath, ['-c', `import ${moduleName}`], { cwd: basePath });
+            child.on('error', () => resolve(false));
+            child.on('close', code => resolve(code === 0));
+        });
+    }
+
+    private installDebugpy(pythonPath: string, basePath: string): Promise<boolean> {
+        this.output.appendLine(`[debugpy-install] ${pythonPath} -m pip install debugpy`);
+        return new Promise(resolve => {
+            const child = spawn(pythonPath, ['-m', 'pip', 'install', 'debugpy'], { cwd: basePath });
+            child.stdout.on('data', chunk => this.output.append(String(chunk)));
+            child.stderr.on('data', chunk => this.output.append(String(chunk)));
+            child.on('error', () => resolve(false));
+            child.on('close', code => resolve(code === 0));
         });
     }
 
@@ -1272,7 +1339,13 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             }
         }
         this.globalRunFlags = normalizeRunFlags(this.state.get<string>(SCENARIO_STORAGE_KEYS.globalRunFlags, ''));
-        this.sudoExecutionEnabled = this.state.get<boolean>(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, false);
+        const sudoByScenario = this.state.get<Record<string, boolean>>(SCENARIO_STORAGE_KEYS.sudoExecutionByScenario, {});
+        this.sudoExecutionByScenario.clear();
+        for (const [scenarioPath, enabled] of Object.entries(sudoByScenario)) {
+            if (enabled) {
+                this.sudoExecutionByScenario.set(toPathKey(scenarioPath), true);
+            }
+        }
 
         this.scenarioSortMode = this.state.get<SortMode>(SCENARIO_STORAGE_KEYS.scenarioSort, 'name');
         const byScenario = this.state.get<Record<string, ScenarioRunSortMode>>(
@@ -1285,12 +1358,14 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     }
 
     private applyScenarioHover(node: ScenarioNode): void {
-        if (!this.globalRunFlags && !this.sudoExecutionEnabled) {
+        const scenarioKey = toPathKey(node.scenarioRootPath ?? node.uri.fsPath);
+        const sudoEnabled = this.sudoExecutionByScenario.get(scenarioKey) === true;
+        if (!this.globalRunFlags && !sudoEnabled) {
             node.tooltip = undefined;
             return;
         }
         const details = [
-            `Sudo mode: ${this.sudoExecutionEnabled ? 'On' : 'Off'}`,
+            `Sudo mode: ${sudoEnabled ? 'On' : 'Off'}`,
             this.globalRunFlags ? `Global run flags: ${this.globalRunFlags}` : undefined
         ].filter(Boolean);
         node.tooltip = details.join('\n');
@@ -1372,24 +1447,46 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         return tag;
     }
 
-    private updateSudoContextKey(): void {
-        void vscode.commands.executeCommand('setContext', 'scenarioToolkit.sudoEnabled', this.sudoExecutionEnabled);
+    private isSudoEnabledForScenario(scenarioPath: string): boolean {
+        return this.sudoExecutionByScenario.get(toPathKey(scenarioPath)) === true;
     }
 
-    private async setSudoExecution(enabled: boolean): Promise<void> {
+    private async setSudoExecutionForScenario(uri: vscode.Uri, enabled: boolean): Promise<void> {
+        const scenarioRootPath = this.resolveScenarioPathFromTarget(uri);
+        if (!scenarioRootPath) {
+            return;
+        }
+
         if (enabled && process.platform === 'win32') {
-            this.sudoExecutionEnabled = false;
-            this.updateSudoContextKey();
-            void this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, false);
             void vscode.window.showWarningMessage('Sudo is not available on Windows.');
             return;
         }
 
-        this.sudoExecutionEnabled = enabled;
-        this.updateSudoContextKey();
-        await this.state.update(SCENARIO_STORAGE_KEYS.sudoExecutionEnabled, this.sudoExecutionEnabled);
+        const key = toPathKey(scenarioRootPath);
+        if (enabled) {
+            this.sudoExecutionByScenario.set(key, true);
+        } else {
+            this.sudoExecutionByScenario.delete(key);
+        }
+
+        await this.state.update(
+            SCENARIO_STORAGE_KEYS.sudoExecutionByScenario,
+            Object.fromEntries(this.sudoExecutionByScenario.entries())
+        );
         void vscode.window.showInformationMessage(
-            `Scenario execution mode: ${this.sudoExecutionEnabled ? 'sudo enabled' : 'sudo disabled'}`
+            `${path.basename(scenarioRootPath)}: sudo ${enabled ? 'enabled' : 'disabled'}`
+        );
+        this.refresh();
+    }
+
+    private resolveScenarioPathFromTarget(uri: vscode.Uri): string | undefined {
+        const scenariosRoot = getScenarioPath();
+        if (!scenariosRoot) {
+            return undefined;
+        }
+        return (
+            findScenarioRoot(uri.fsPath, scenariosRoot) ??
+            (existsDir(uri.fsPath) && toPathKey(path.dirname(uri.fsPath)) === toPathKey(scenariosRoot) ? uri.fsPath : undefined)
         );
     }
 }
