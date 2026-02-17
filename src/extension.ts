@@ -9,6 +9,7 @@ import { DevProvider } from './providers/devProvider';
 import { ManageWorkspaceProvider } from './providers/manageWorkspaceProvider';
 import { ScenarioProvider } from './providers/scenarioProvider';
 import { SrcProvider } from './providers/srcProvider';
+import { openRunAnalysisPanel } from './runAnalysis/runAnalysisPanel';
 import { WorkspaceManager } from './workspace/workspaceManager';
 import { TreeViewWorkspaceState } from './workspace/treeViewState';
 
@@ -113,6 +114,9 @@ export function activate(context: vscode.ExtensionContext): void {
         resetWorkspace: () => workspaceManager.reset(),
         openConfigInspector: uri => {
             void configInspectorProvider.openForConfigsFolder(uri);
+        },
+        openRunAnalysis: uri => {
+            void openRunAnalysisPanel(uri);
         }
     });
 

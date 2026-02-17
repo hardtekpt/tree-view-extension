@@ -725,6 +725,39 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
     }
 
+    // Run scenario with VS Code debugger using an ephemeral Python launch configuration.
+    async runWithDebugger(uri: vscode.Uri): Promise<void> {
+        const basePath = getBasePath();
+        if (!basePath || !existsDir(basePath)) {
+            void vscode.window.showWarningMessage(
+                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`
+            );
+            return;
+        }
+
+        const detectedPython = await this.configurePythonFromLocalVenv(basePath);
+        const python = detectedPython ?? getPythonCommand();
+        const runScript = getRunScript();
+        const scenarioName = path.basename(uri.fsPath);
+        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
+        const debugConfiguration: vscode.DebugConfiguration = {
+            type: 'python',
+            request: 'launch',
+            name: `Run Scenario: ${scenarioName}`,
+            program: path.isAbsolute(runScript) ? runScript : path.join(basePath, runScript),
+            cwd: basePath,
+            args: [RUNTIME_ARGS.scenarioFlag, scenarioName, ...extraFlags],
+            python,
+            console: 'integratedTerminal',
+            justMyCode: false
+        };
+
+        const started = await vscode.debug.startDebugging(undefined, debugConfiguration);
+        if (!started) {
+            void vscode.window.showErrorMessage('Could not start debugger for this scenario.');
+        }
+    }
+
     // Run scenario in a detached GNU screen session for long-running jobs.
     async runInDetachedScreen(uri: vscode.Uri): Promise<void> {
         const basePath = getBasePath();

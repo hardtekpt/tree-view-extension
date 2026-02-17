@@ -28,6 +28,7 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
   - Global run flags action in Scenarios view title.
   - Scenario CRUD: duplicate, rename, delete.
   - Output run CRUD: rename, delete, open `.log`.
+  - Analyze output run plots in a dedicated editor webview (one panel per click).
   - Pin scenarios and output runs.
   - Sort scenarios and per-scenario output runs.
   - Tag output runs (catalog + assignment + filtering).

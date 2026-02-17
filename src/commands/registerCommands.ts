@@ -14,10 +14,11 @@ export function registerCommands(
         loadWorkspace: () => void;
         resetWorkspace: () => void;
         openConfigInspector: (uri: vscode.Uri) => void;
+        openRunAnalysis: (uri: vscode.Uri) => void;
     }
 ): void {
     const { devProvider, scenarioProvider } = providers;
-    const { refreshToolkit, saveWorkspace, loadWorkspace, resetWorkspace, openConfigInspector } = callbacks;
+    const { refreshToolkit, saveWorkspace, loadWorkspace, resetWorkspace, openConfigInspector, openRunAnalysis } = callbacks;
 
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.openFile, openFile),
@@ -28,6 +29,9 @@ export function registerCommands(
             }
         }),
         vscode.commands.registerCommand(COMMANDS.runScenario, (node: WithUri) => scenarioProvider.run(node.uri)),
+        vscode.commands.registerCommand(COMMANDS.runScenarioDebug, (node: WithUri) =>
+            scenarioProvider.runWithDebugger(node.uri)
+        ),
         vscode.commands.registerCommand(COMMANDS.runScenarioSudo, (node: WithUri) =>
             scenarioProvider.run(node.uri, true)
         ),
@@ -42,6 +46,7 @@ export function registerCommands(
         vscode.commands.registerCommand(COMMANDS.deleteScenario, (node: WithUri) => scenarioProvider.delete(node.uri)),
         vscode.commands.registerCommand(COMMANDS.renameRun, (node: WithUri) => scenarioProvider.renameIoRun(node.uri)),
         vscode.commands.registerCommand(COMMANDS.deleteRun, (node: WithUri) => scenarioProvider.deleteIoRun(node.uri)),
+        vscode.commands.registerCommand(COMMANDS.analyzeRun, (node: WithUri) => openRunAnalysis(node.uri)),
         vscode.commands.registerCommand(COMMANDS.openRunLog, (node: WithUri) => scenarioProvider.openIoRunLog(node.uri)),
         vscode.commands.registerCommand(COMMANDS.manageRunTags, (node: WithUri) => scenarioProvider.manageRunTags(node)),
         vscode.commands.registerCommand(COMMANDS.clearRunTags, (node: WithUri) => scenarioProvider.clearRunTags(node)),
