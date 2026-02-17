@@ -1,8 +1,8 @@
 {
  "name": "scenario-toolkit",
  "displayName": "Scenario Toolkit",
- "publisher": "Francisco Santos",
- "version": "0.0.2",
+ "publisher": "francisco-santos",
+ "version": "0.0.3",
  "engines": {
   "vscode": "^1.85.0"
  },
