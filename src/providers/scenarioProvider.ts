@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as net from 'net';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as vscode from 'vscode';
 import { getBasePath, getRunCommandTemplate, getScenarioPath } from '../config';
 import {
@@ -28,6 +28,24 @@ import {
 import { createTagId, formatTagChip, normalizeColor, normalizeTag } from './scenario/tagUtils';
 import { findScenarioRoot, matchRunTagFilter, sortEntries } from './scenario/treeUtils';
 import { RunTagDefinition, ScenarioRunSortMode, ScenarioWorkspaceState, SortMode } from './scenario/types';
+
+type DebugRunTarget =
+    | { kind: 'program'; program: string; args: string[] }
+    | { kind: 'module'; module: string; args: string[] };
+
+interface ScenarioRunInvocation {
+    pythonArgs: string[];
+    debugTarget: DebugRunTarget;
+}
+
+interface ScenarioRunContext {
+    basePath: string;
+    python: string;
+    scenarioName: string;
+    invocation: ScenarioRunInvocation;
+    extraFlags: string[];
+    useSudo: boolean;
+}
 
 // Main provider for scenarios, run outputs, and run tagging workflows.
 export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
@@ -718,72 +736,33 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     // Run scenario immediately in the local process.
     async run(uri: vscode.Uri): Promise<void> {
-        const basePath = getBasePath();
-        if (!basePath || !existsDir(basePath)) {
-            void vscode.window.showWarningMessage(`Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`);
+        const context = await this.buildScenarioRunContext(uri);
+        if (!context) {
             return;
         }
 
-        const python = await this.configurePythonFromLocalVenv(basePath);
-        const scenarioName = path.basename(uri.fsPath);
-        const runCommand = this.buildScenarioRunCommand(basePath, scenarioName);
-        if (!runCommand) {
+        const args = [...context.invocation.pythonArgs, ...context.extraFlags];
+        const effectiveCommand = context.useSudo ? 'sudo' : context.python;
+        const effectiveArgs = context.useSudo ? ['-n', context.python, ...args] : args;
+        this.output.appendLine(`[run] ${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`);
+
+        const child = this.spawnLoggedProcess(effectiveCommand, effectiveArgs, context.basePath);
+        if (!child) {
+            void vscode.window.showErrorMessage('Scenario run failed: could not start process.');
             return;
         }
-        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
-        const args = [...runCommand.args, ...extraFlags];
-        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
-        if (useSudo === undefined) {
-            return;
-        }
-
-        const effectiveCommand = useSudo ? 'sudo' : python;
-        const effectiveArgs = useSudo
-            ? ['-n', python, runCommand.program, ...args]
-            : [runCommand.program, ...args];
-        const command = `${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`;
-        this.output.appendLine(`[run] ${command}`);
-
-        const child = spawn(effectiveCommand, effectiveArgs, { cwd: basePath });
-        child.stdout.on('data', chunk => this.output.append(String(chunk)));
-        child.stderr.on('data', chunk => this.output.append(String(chunk)));
-        child.on('error', error => {
-            this.output.appendLine(`[error] ${error.message}`);
-            void vscode.window.showErrorMessage(`Scenario run failed: ${error.message}`);
-        });
-        child.on('close', code => {
-            this.output.appendLine(`[exit] code=${code ?? 'unknown'}`);
-            this.output.show(true);
-            if (code !== 0) {
-                void vscode.window.showWarningMessage(`Scenario process exited with code ${code ?? 'unknown'}.`);
-            }
-        });
+        this.watchProcessExit(child, '[exit]', 'Scenario process exited with code');
     }
 
     // Run scenario with VS Code debugger using an ephemeral Python launch configuration.
     async runWithDebugger(uri: vscode.Uri): Promise<void> {
-        const basePath = getBasePath();
-        if (!basePath || !existsDir(basePath)) {
-            void vscode.window.showWarningMessage(
-                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`
-            );
+        const context = await this.buildScenarioRunContext(uri);
+        if (!context) {
             return;
         }
 
-        const python = await this.configurePythonFromLocalVenv(basePath);
-        const scenarioName = path.basename(uri.fsPath);
-        const runCommand = this.buildScenarioRunCommand(basePath, scenarioName);
-        if (!runCommand) {
-            return;
-        }
-        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
-        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
-        if (useSudo === undefined) {
-            return;
-        }
-
-        if (useSudo) {
-            const debugpyReady = await this.ensureDebugpyAvailable(python, basePath);
+        if (context.useSudo) {
+            const debugpyReady = await this.ensureDebugpyAvailable(context.python, context.basePath);
             if (!debugpyReady) {
                 return;
             }
@@ -795,26 +774,19 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 '--listen',
                 `127.0.0.1:${port}`,
                 '--wait-for-client',
-                runCommand.program,
-                ...runCommand.args,
-                ...extraFlags
+                ...context.invocation.pythonArgs,
+                ...context.extraFlags
             ];
-            this.output.appendLine(`[run-debug-sudo] sudo -n ${[python, ...debugArgs].map(quoteIfNeeded).join(' ')}`);
+            this.output.appendLine(
+                `[run-debug-sudo] sudo -n ${[context.python, ...debugArgs].map(quoteIfNeeded).join(' ')}`
+            );
 
-            const child = spawn('sudo', ['-n', python, ...debugArgs], { cwd: basePath });
-            child.stdout.on('data', chunk => this.output.append(String(chunk)));
-            child.stderr.on('data', chunk => this.output.append(String(chunk)));
-            child.on('error', error => {
-                this.output.appendLine(`[error] ${error.message}`);
-                void vscode.window.showErrorMessage(`Scenario debug run failed: ${error.message}`);
-            });
-            child.on('close', code => {
-                this.output.appendLine(`[debug-sudo-exit] code=${code ?? 'unknown'}`);
-                this.output.show(true);
-                if (code !== 0) {
-                    void vscode.window.showWarningMessage(`Scenario debug process exited with code ${code ?? 'unknown'}.`);
-                }
-            });
+            const child = this.spawnLoggedProcess('sudo', ['-n', context.python, ...debugArgs], context.basePath);
+            if (!child) {
+                void vscode.window.showErrorMessage('Scenario debug run failed: could not start process.');
+                return;
+            }
+            this.watchProcessExit(child, '[debug-sudo-exit]', 'Scenario debug process exited with code');
 
             const ready = await this.waitForDebugServer(port, 10000);
             if (!ready) {
@@ -826,9 +798,9 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             const started = await vscode.debug.startDebugging(undefined, {
                 type: 'python',
                 request: 'attach',
-                name: `Run Scenario (sudo): ${scenarioName}`,
+                name: `Run Scenario (sudo): ${context.scenarioName}`,
                 connect: { host: '127.0.0.1', port },
-                pathMappings: [{ localRoot: basePath, remoteRoot: basePath }],
+                pathMappings: [{ localRoot: context.basePath, remoteRoot: context.basePath }],
                 justMyCode: false
             });
             if (!started) {
@@ -841,14 +813,19 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const debugConfiguration: vscode.DebugConfiguration = {
             type: 'python',
             request: 'launch',
-            name: `Run Scenario: ${scenarioName}`,
-            program: runCommand.program,
-            cwd: basePath,
-            args: [...runCommand.args, ...extraFlags],
-            python,
+            name: `Run Scenario: ${context.scenarioName}`,
+            cwd: context.basePath,
+            python: context.python,
             console: 'integratedTerminal',
             justMyCode: false
         };
+        if (context.invocation.debugTarget.kind === 'program') {
+            debugConfiguration.program = context.invocation.debugTarget.program;
+            debugConfiguration.args = [...context.invocation.debugTarget.args, ...context.extraFlags];
+        } else {
+            debugConfiguration.module = context.invocation.debugTarget.module;
+            debugConfiguration.args = [...context.invocation.debugTarget.args, ...context.extraFlags];
+        }
 
         const started = await vscode.debug.startDebugging(undefined, debugConfiguration);
         if (!started) {
@@ -858,24 +835,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     // Run scenario in a detached GNU screen session for long-running jobs.
     async runInDetachedScreen(uri: vscode.Uri): Promise<void> {
-        const basePath = getBasePath();
-        if (!basePath || !existsDir(basePath)) {
-            void vscode.window.showWarningMessage(
-                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`
-            );
-            return;
-        }
-
-        const python = await this.configurePythonFromLocalVenv(basePath);
-        const scenarioName = path.basename(uri.fsPath);
-        const runCommand = this.buildScenarioRunCommand(basePath, scenarioName);
-        if (!runCommand) {
-            return;
-        }
-        const extraFlags = parseCommandLineArgs(this.globalRunFlags);
-        const args = [...runCommand.args, ...extraFlags];
-        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
-        if (useSudo === undefined) {
+        const context = await this.buildScenarioRunContext(uri);
+        if (!context) {
             return;
         }
 
@@ -884,19 +845,18 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return;
         }
 
-        const sessionName = buildScreenSessionName(scenarioName);
-        const screenArgs = ['-dmS', sessionName, python, runCommand.program, ...args];
-        const effectiveCommand = useSudo ? 'sudo' : 'screen';
-        const effectiveArgs = useSudo ? ['-n', 'screen', ...screenArgs] : screenArgs;
+        const sessionName = buildScreenSessionName(context.scenarioName);
+        const screenArgs = ['-dmS', sessionName, context.python, ...context.invocation.pythonArgs, ...context.extraFlags];
+        const effectiveCommand = context.useSudo ? 'sudo' : 'screen';
+        const effectiveArgs = context.useSudo ? ['-n', 'screen', ...screenArgs] : screenArgs;
 
         this.output.appendLine(`[run-screen] ${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`);
 
-        const child = spawn(effectiveCommand, effectiveArgs, { cwd: basePath });
-        child.stderr.on('data', chunk => this.output.append(String(chunk)));
-        child.on('error', error => {
-            this.output.appendLine(`[error] ${error.message}`);
-            void vscode.window.showErrorMessage(`Failed to start detached screen session: ${error.message}`);
-        });
+        const child = this.spawnLoggedProcess(effectiveCommand, effectiveArgs, context.basePath);
+        if (!child) {
+            void vscode.window.showErrorMessage('Failed to start detached screen session: could not start process.');
+            return;
+        }
         child.on('close', code => {
             this.output.appendLine(`[run-screen-exit] code=${code ?? 'unknown'}`);
             this.output.show(true);
@@ -911,6 +871,37 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 `Could not start detached screen session (exit ${code ?? 'unknown'}). Is 'screen' installed?`
             );
         });
+    }
+
+    private async buildScenarioRunContext(uri: vscode.Uri): Promise<ScenarioRunContext | undefined> {
+        const basePath = getBasePath();
+        if (!basePath || !existsDir(basePath)) {
+            void vscode.window.showWarningMessage(
+                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`
+            );
+            return undefined;
+        }
+
+        const python = await this.configurePythonFromLocalVenv(basePath);
+        const scenarioName = path.basename(uri.fsPath);
+        const invocation = this.buildScenarioRunInvocation(basePath, scenarioName);
+        if (!invocation) {
+            return undefined;
+        }
+
+        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
+        if (useSudo === undefined) {
+            return undefined;
+        }
+
+        return {
+            basePath,
+            python,
+            scenarioName,
+            invocation,
+            extraFlags: parseCommandLineArgs(this.globalRunFlags),
+            useSudo
+        };
     }
 
     private async resolveSudoUsage(basePath: string, scenarioPath: string): Promise<boolean | undefined> {
@@ -1013,10 +1004,10 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
     }
 
-    private buildScenarioRunCommand(
+    private buildScenarioRunInvocation(
         basePath: string,
         scenarioName: string
-    ): { program: string; args: string[] } | undefined {
+    ): ScenarioRunInvocation | undefined {
         const template = getRunCommandTemplate().trim();
         if (!template.includes('<scenario_name>')) {
             void vscode.window.showWarningMessage(
@@ -1034,9 +1025,27 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return undefined;
         }
 
+        if (parts[0] === '-m') {
+            const moduleName = parts[1];
+            if (!moduleName) {
+                void vscode.window.showWarningMessage(
+                    `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.runCommandTemplate} to a valid module invocation.`
+                );
+                return undefined;
+            }
+            const moduleArgs = parts.slice(2);
+            return {
+                pythonArgs: ['-m', moduleName, ...moduleArgs],
+                debugTarget: { kind: 'module', module: moduleName, args: moduleArgs }
+            };
+        }
+
         const [programToken, ...args] = parts;
         const program = path.isAbsolute(programToken) ? programToken : path.join(basePath, programToken);
-        return { program, args };
+        return {
+            pythonArgs: [program, ...args],
+            debugTarget: { kind: 'program', program, args }
+        };
     }
 
     private async ensureDebugpyAvailable(pythonPath: string, basePath: string): Promise<boolean> {
@@ -1085,6 +1094,40 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             child.stderr.on('data', chunk => this.output.append(String(chunk)));
             child.on('error', () => resolve(false));
             child.on('close', code => resolve(code === 0));
+        });
+    }
+
+    private spawnLoggedProcess(
+        command: string,
+        args: string[],
+        cwd: string
+    ): ChildProcessWithoutNullStreams | undefined {
+        try {
+            const child = spawn(command, args, { cwd });
+            child.stdout.on('data', chunk => this.output.append(String(chunk)));
+            child.stderr.on('data', chunk => this.output.append(String(chunk)));
+            child.on('error', error => {
+                this.output.appendLine(`[error] ${error.message}`);
+            });
+            return child;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.output.appendLine(`[error] ${message}`);
+            return undefined;
+        }
+    }
+
+    private watchProcessExit(
+        child: ChildProcessWithoutNullStreams,
+        logPrefix: string,
+        nonZeroWarningPrefix: string
+    ): void {
+        child.on('close', code => {
+            this.output.appendLine(`${logPrefix} code=${code ?? 'unknown'}`);
+            this.output.show(true);
+            if (code !== 0) {
+                void vscode.window.showWarningMessage(`${nonZeroWarningPrefix} ${code ?? 'unknown'}.`);
+            }
         });
     }
 
