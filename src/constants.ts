@@ -25,7 +25,7 @@ export const DEFAULTS = {
 export const FOLDER_NAMES = {
     sourceRoot: 'src',
     scenariosRoot: 'scenarios',
-    scenarioConfigs: 'configs',
+    scenarioConfigs: 'configuration',
     scenarioIo: 'io',
     toolkitStateDir: '.scenario-toolkit'
 } as const;

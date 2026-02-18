@@ -2,7 +2,7 @@
  "name": "scenario-toolkit",
  "displayName": "Scenario Toolkit",
  "publisher": "francisco-santos",
- "version": "0.0.4",
+ "version": "0.0.5",
  "engines": {
   "vscode": "^1.85.0"
  },
@@ -26,7 +26,7 @@
     "scenarioToolkit.runCommandTemplate": {
      "type": "string",
      "default": "run.py <scenario_name>",
-     "description": "Python command template args (without python executable). Must include <scenario_name>, e.g. main.py <scenario_name>"
+     "description": "Python command template. Must include <scenario_name>, e.g. main.py <scenario_name>"
     }
    }
   },
