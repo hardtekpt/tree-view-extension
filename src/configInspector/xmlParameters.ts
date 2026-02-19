@@ -61,6 +61,19 @@ export function readXmlFile(filePath: string): string {
     return fs.readFileSync(filePath, 'utf8');
 }
 
+export function findXmlParameterPosition(
+    xmlText: string,
+    filePath: string,
+    id: string
+): { line: number; character: number } | undefined {
+    const internal = parseParametersWithSpans(xmlText, filePath);
+    const match = internal.find(param => param.id === id);
+    if (!match) {
+        return undefined;
+    }
+    return offsetToPosition(xmlText, match.start);
+}
+
 function parseParametersWithSpans(xmlText: string, filePath: string): InternalParameter[] {
     const output: InternalParameter[] = [];
     const stack: StackNode[] = [];
@@ -258,4 +271,21 @@ function escapeXmlAttribute(value: string): string {
     return escapeXmlText(value)
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&apos;');
+}
+
+function offsetToPosition(text: string, offset: number): { line: number; character: number } {
+    let line = 0;
+    let lineStart = 0;
+
+    for (let i = 0; i < offset && i < text.length; i += 1) {
+        if (text[i] === '\n') {
+            line += 1;
+            lineStart = i + 1;
+        }
+    }
+
+    return {
+        line,
+        character: Math.max(0, offset - lineStart)
+    };
 }

@@ -188,6 +188,17 @@ export function registerCommands(
     );
 }
 
-function openFile(uri: vscode.Uri): Thenable<vscode.TextEditor> {
-    return vscode.window.showTextDocument(uri);
+async function openFile(uri: vscode.Uri): Promise<void> {
+    try {
+        await vscode.commands.executeCommand('vscode.open', uri, {
+            preview: false
+        });
+    } catch {
+        try {
+            await vscode.window.showTextDocument(uri, { preview: false });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Could not open file: ${message}`);
+        }
+    }
 }

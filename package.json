@@ -27,6 +27,16 @@
      "type": "string",
      "default": "run.py <scenario_name>",
      "description": "Python command template. Must include <scenario_name>, e.g. main.py <scenario_name>"
+    },
+    "scenarioToolkit.scenarioConfigsFolderName": {
+     "type": "string",
+     "default": "configs",
+     "description": "Folder name inside each scenario containing XML configuration files."
+    },
+    "scenarioToolkit.scenarioIoFolderName": {
+     "type": "string",
+     "default": "io",
+     "description": "Folder name inside each scenario containing output runs."
     }
    }
   },

@@ -8,8 +8,8 @@ It adds a dedicated Toolkit sidebar to manage source files, scenarios, scenario 
 Set `scenarioToolkit.basePath` to a root folder with this structure:
 
 - `<basePath>/src` (source code)
-- `<basePath>/scenarios/<scenario>/configs` (XML config files)
-- `<basePath>/scenarios/<scenario>/io` (output run folders/files)
+- `<basePath>/scenarios/<scenario>/<scenarioToolkit.scenarioConfigsFolderName>` (XML config files, default `configs`)
+- `<basePath>/scenarios/<scenario>/<scenarioToolkit.scenarioIoFolderName>` (output run folders/files, default `io`)
 
 ## Core Features
 
@@ -45,8 +45,10 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 ## Settings
 
 - `scenarioToolkit.basePath`: project root path.
-- `scenarioToolkit.pythonCommand`: Python executable fallback (used if no venv auto-detected).
+- `scenarioToolkit.pythonCommand`: Python executable fallback (used if no local root-level venv is auto-detected).
 - `scenarioToolkit.runCommandTemplate`: command template args with `<scenario_name>` placeholder (default `run.py <scenario_name>`).
+- `scenarioToolkit.scenarioConfigsFolderName`: folder name used for scenario config files (default `configs`).
+- `scenarioToolkit.scenarioIoFolderName`: folder name used for scenario output runs (default `io`).
 
 ## Installation (From Source)
 

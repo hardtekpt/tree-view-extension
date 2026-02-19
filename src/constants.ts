@@ -14,19 +14,21 @@ export const SETTINGS_KEYS = {
     basePath: 'basePath',
     pythonCommand: 'pythonCommand',
     runCommandTemplate: 'runCommandTemplate',
+    scenarioConfigsFolderName: 'scenarioConfigsFolderName',
+    scenarioIoFolderName: 'scenarioIoFolderName',
     pythonDefaultInterpreterPath: 'defaultInterpreterPath'
 } as const;
 
 export const DEFAULTS = {
     pythonCommand: 'python',
-    runCommandTemplate: 'run.py <scenario_name>'
+    runCommandTemplate: 'run.py <scenario_name>',
+    scenarioConfigsFolderName: 'configs',
+    scenarioIoFolderName: 'io'
 } as const;
 
 export const FOLDER_NAMES = {
     sourceRoot: 'src',
     scenariosRoot: 'scenarios',
-    scenarioConfigs: 'configuration',
-    scenarioIo: 'io',
     toolkitStateDir: '.scenario-toolkit'
 } as const;
 

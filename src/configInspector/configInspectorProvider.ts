@@ -3,12 +3,19 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { FILE_EXTENSIONS, GLOB_PATTERNS, STORAGE_KEYS, VIEW_IDS, WORKBENCH_COMMANDS } from '../constants';
 import { getConfigInspectorHtml } from './webviewHtml';
-import { applyXmlParameterUpdates, extractXmlParameters, readXmlFile, XmlParameter } from './xmlParameters';
+import {
+    applyXmlParameterUpdates,
+    extractXmlParameters,
+    findXmlParameterPosition,
+    readXmlFile,
+    XmlParameter
+} from './xmlParameters';
 
 type IncomingMessage =
     | { type: 'ready' }
     | { type: 'update'; id: string; value: string }
-    | { type: 'togglePin'; id: string };
+    | { type: 'togglePin'; id: string }
+    | { type: 'openParameter'; id: string };
 
 const CODICON_CSS_RELATIVE_PATH = ['node_modules', '@vscode', 'codicons', 'dist', 'codicon.css'] as const;
 
@@ -47,6 +54,10 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
             }
             if (message.type === 'togglePin') {
                 this.toggleParameterPin(message.id);
+                return;
+            }
+            if (message.type === 'openParameter') {
+                void this.openParameterInEditor(message.id);
             }
         });
     }
@@ -164,6 +175,31 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private async openParameterInEditor(id: string): Promise<void> {
+        const filePath = extractFilePathFromId(id);
+        if (!filePath || !fs.existsSync(filePath)) {
+            void vscode.window.showErrorMessage('Could not open XML property: file no longer exists.');
+            return;
+        }
+
+        try {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+            const positionInfo = findXmlParameterPosition(document.getText(), filePath, id);
+            const editor = await vscode.window.showTextDocument(document, { preview: false });
+
+            if (!positionInfo) {
+                return;
+            }
+
+            const position = new vscode.Position(positionInfo.line, positionInfo.character);
+            editor.selection = new vscode.Selection(position, position);
+            editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Failed to open XML property: ${message}`);
+        }
+    }
+
     private rebuildWatcher(): void {
         this.watcher?.dispose();
         this.watcher = undefined;
@@ -221,4 +257,13 @@ interface ConfigInspectorPayload {
 
 function delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function extractFilePathFromId(id: string): string | undefined {
+    const separator = '::';
+    const index = id.indexOf(separator);
+    if (index <= 0) {
+        return undefined;
+    }
+    return id.slice(0, index);
 }

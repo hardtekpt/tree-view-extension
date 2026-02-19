@@ -29,3 +29,22 @@ export function getPythonCommand(): string {
 export function getRunCommandTemplate(): string {
     return config().get<string>(SETTINGS_KEYS.runCommandTemplate, DEFAULTS.runCommandTemplate);
 }
+
+export function getScenarioConfigsFolderName(): string {
+    return sanitizeFolderName(
+        config().get<string>(SETTINGS_KEYS.scenarioConfigsFolderName, DEFAULTS.scenarioConfigsFolderName),
+        DEFAULTS.scenarioConfigsFolderName
+    );
+}
+
+export function getScenarioIoFolderName(): string {
+    return sanitizeFolderName(
+        config().get<string>(SETTINGS_KEYS.scenarioIoFolderName, DEFAULTS.scenarioIoFolderName),
+        DEFAULTS.scenarioIoFolderName
+    );
+}
+
+function sanitizeFolderName(value: string | undefined, fallback: string): string {
+    const cleaned = (value ?? '').trim().replace(/[\\/]+/g, '');
+    return cleaned.length > 0 ? cleaned : fallback;
+}

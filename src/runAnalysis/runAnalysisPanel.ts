@@ -227,7 +227,7 @@ function renderFolder(webview: vscode.Webview, runUri: vscode.Uri, folder: PlotF
         return content || '<div class="empty">No plot images found in this output run folder.</div>';
     }
 
-    return `<details open><summary>${escapeHtml(folder.relativePath || folder.name)}</summary>${content || '<div class="empty">No images in this folder.</div>'}</details>`;
+    return `<details><summary>${escapeHtml(folder.relativePath || folder.name)}</summary>${content || '<div class="empty">No images in this folder.</div>'}</details>`;
 }
 
 function escapeHtml(value: string): string {

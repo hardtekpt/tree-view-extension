@@ -106,10 +106,14 @@ export function findPythonInBasePath(basePath: string): string | undefined {
     }
 
     for (const entry of entries) {
-        if (!entry.isDirectory() || entry.isSymbolicLink() || preferredDirs.includes(entry.name)) {
+        if (preferredDirs.includes(entry.name)) {
             continue;
         }
-        const pythonPath = resolvePythonInVenvRoot(path.join(basePath, entry.name));
+        const candidatePath = path.join(basePath, entry.name);
+        if (!existsDir(candidatePath)) {
+            continue;
+        }
+        const pythonPath = resolvePythonInVenvRoot(candidatePath);
         if (pythonPath) {
             return pythonPath;
         }
@@ -118,32 +122,35 @@ export function findPythonInBasePath(basePath: string): string | undefined {
     return undefined;
 }
 
-// Validate a virtual environment folder by marker + interpreter binary.
+// Validate a virtual environment folder by marker + interpreter, with heuristic fallback.
 export function resolvePythonInVenvRoot(venvRoot: string): string | undefined {
     const marker = path.join(venvRoot, FILE_NAMES.venvMarker);
-    if (!existsFile(marker)) {
-        return undefined;
-    }
-
+    const hasMarker = existsFile(marker);
     const unixPython = path.join(venvRoot, VENV_PATHS.unixBinDir, VENV_PATHS.unixPython);
+    const unixPython3 = path.join(venvRoot, VENV_PATHS.unixBinDir, 'python3');
     const windowsPython = path.join(venvRoot, VENV_PATHS.windowsScriptsDir, VENV_PATHS.windowsPythonExe);
-    if (process.platform === 'win32') {
-        if (existsFile(windowsPython)) {
-            return windowsPython;
-        }
-        if (existsFile(unixPython)) {
-            return unixPython;
-        }
+
+    const candidates = process.platform === 'win32'
+        ? [windowsPython, unixPython, unixPython3]
+        : [unixPython, unixPython3, windowsPython];
+    const interpreter = candidates.find(candidate => existsFile(candidate));
+    if (!interpreter) {
         return undefined;
     }
 
-    if (existsFile(unixPython)) {
-        return unixPython;
+    if (hasMarker) {
+        return interpreter;
     }
-    if (existsFile(windowsPython)) {
-        return windowsPython;
+
+    const hasActivateScript =
+        existsFile(path.join(venvRoot, VENV_PATHS.unixBinDir, 'activate')) ||
+        existsFile(path.join(venvRoot, VENV_PATHS.windowsScriptsDir, 'activate')) ||
+        existsFile(path.join(venvRoot, VENV_PATHS.windowsScriptsDir, 'activate.bat'));
+    if (!hasActivateScript) {
+        return undefined;
     }
-    return undefined;
+
+    return interpreter;
 }
 
 // Rename with retries + copy/remove fallback for transient Windows locks.

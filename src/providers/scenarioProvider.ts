@@ -3,15 +3,14 @@ import * as net from 'net';
 import * as path from 'path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as vscode from 'vscode';
-import { getBasePath, getRunCommandTemplate, getScenarioPath } from '../config';
 import {
-    CONFIG_ROOT,
-    DEFAULTS,
-    FILE_EXTENSIONS,
-    FOLDER_NAMES,
-    PYTHON_CONFIG_ROOT,
-    SETTINGS_KEYS
-} from '../constants';
+    getBasePath,
+    getRunCommandTemplate,
+    getScenarioConfigsFolderName,
+    getScenarioIoFolderName,
+    getScenarioPath
+} from '../config';
+import { CONFIG_ROOT, DEFAULTS, FILE_EXTENSIONS, FOLDER_NAMES, PYTHON_CONFIG_ROOT, SETTINGS_KEYS } from '../constants';
 import { ScenarioNode } from '../nodes/scenarioNode';
 import { existsDir, uniquePath, listEntriesSorted } from '../utils/fileSystem';
 import { toPathKey } from '../utils/pathKey';
@@ -242,7 +241,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     toggleRunSortModeForScenario(target: { uri: vscode.Uri; scenarioRootPath?: string }): void {
         const rootPath = target.scenarioRootPath ?? target.uri.fsPath;
         const key = toPathKey(rootPath);
-        const current = this.runSortByScenario.get(key) ?? 'name';
+        const current = this.runSortByScenario.get(key) ?? 'recent';
         const next: ScenarioRunSortMode = current === 'name' ? 'recent' : 'name';
 
         this.runSortByScenario.set(key, next);
@@ -523,7 +522,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                     const normalized = toPathKey(full);
                     const isPinned = this.pinnedScenarios.has(normalized);
                     const isSudoEnabled = this.isSudoEnabledForScenario(full);
-                    const runSortMode = this.runSortByScenario.get(normalized) ?? 'name';
+                    const runSortMode = this.runSortByScenario.get(normalized) ?? 'recent';
                     const node = new ScenarioNode(
                         vscode.Uri.file(full),
                         'scenario',
@@ -547,8 +546,10 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
         if (element.type === 'scenario') {
             // Scenario node expands into logical top-level folders.
-            const configsPath = path.join(element.uri.fsPath, FOLDER_NAMES.scenarioConfigs);
-            const ioPath = path.join(element.uri.fsPath, FOLDER_NAMES.scenarioIo);
+            const configsFolderName = getScenarioConfigsFolderName();
+            const ioFolderName = getScenarioIoFolderName();
+            const configsPath = path.join(element.uri.fsPath, configsFolderName);
+            const ioPath = path.join(element.uri.fsPath, ioFolderName);
             const children: ScenarioNode[] = [];
 
             if (existsDir(configsPath)) {
@@ -557,7 +558,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                         vscode.Uri.file(configsPath),
                         'configsFolder',
                         vscode.TreeItemCollapsibleState.Collapsed,
-                        FOLDER_NAMES.scenarioConfigs,
+                        configsFolderName,
                         false,
                         element.scenarioRootPath ?? element.uri.fsPath
                     )
@@ -569,7 +570,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                     vscode.Uri.file(ioPath),
                     'ioFolder',
                     vscode.TreeItemCollapsibleState.Collapsed,
-                    FOLDER_NAMES.scenarioIo,
+                    ioFolderName,
                     false,
                     element.scenarioRootPath ?? element.uri.fsPath
                 );
@@ -600,13 +601,13 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const names =
-            path.basename(element.uri.fsPath).toLowerCase() === FOLDER_NAMES.scenarioIo
+            path.basename(element.uri.fsPath).toLowerCase() === getScenarioIoFolderName().toLowerCase()
                 ? sortEntries(
                     element.uri.fsPath,
                     fs.readdirSync(element.uri.fsPath),
                     this.runSortByScenario.get(
                         toPathKey(element.scenarioRootPath ?? element.uri.fsPath)
-                    ) ?? 'name',
+                    ) ?? 'recent',
                     false
                 )
                 : listEntriesSorted(element.uri.fsPath);
@@ -671,7 +672,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         if (toPathKey(parentPath) === normalizedRoot) {
             const isPinned = this.pinnedScenarios.has(normalizedPath);
             const isSudoEnabled = this.isSudoEnabledForScenario(fsPath);
-            const runSortMode = this.runSortByScenario.get(normalizedPath) ?? 'name';
+            const runSortMode = this.runSortByScenario.get(normalizedPath) ?? 'recent';
             const node = new ScenarioNode(
                 vscode.Uri.file(fsPath),
                 'scenario',
@@ -692,12 +693,14 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
 
         const baseName = path.basename(fsPath).toLowerCase();
-        if (baseName === FOLDER_NAMES.scenarioIo) {
+        const ioFolderName = getScenarioIoFolderName().toLowerCase();
+        const configsFolderName = getScenarioConfigsFolderName().toLowerCase();
+        if (baseName === ioFolderName) {
             const ioNode = new ScenarioNode(
                 vscode.Uri.file(fsPath),
                 'ioFolder',
                 vscode.TreeItemCollapsibleState.Collapsed,
-                FOLDER_NAMES.scenarioIo,
+                getScenarioIoFolderName(),
                 false,
                 scenarioRootPath
             );
@@ -705,18 +708,18 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return ioNode;
         }
 
-        if (baseName === FOLDER_NAMES.scenarioConfigs) {
+        if (baseName === configsFolderName) {
             return new ScenarioNode(
                 vscode.Uri.file(fsPath),
                 'configsFolder',
                 vscode.TreeItemCollapsibleState.Collapsed,
-                FOLDER_NAMES.scenarioConfigs,
+                getScenarioConfigsFolderName(),
                 false,
                 scenarioRootPath
             );
         }
 
-        const ioPath = path.join(scenarioRootPath, FOLDER_NAMES.scenarioIo);
+        const ioPath = path.join(scenarioRootPath, getScenarioIoFolderName());
         const isInsideIo = toPathKey(fsPath).startsWith(`${toPathKey(ioPath)}${path.sep}`);
         const isPinnedRun = isInsideIo ? this.pinnedIoRuns.has(normalizedPath) : false;
 
@@ -1158,7 +1161,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         fs.cpSync(uri.fsPath, destination, { recursive: true });
 
         // Keep duplicated scenarios clean by clearing inherited run outputs.
-        const duplicatedIoPath = path.join(destination, FOLDER_NAMES.scenarioIo);
+        const duplicatedIoPath = path.join(destination, getScenarioIoFolderName());
         if (fs.existsSync(duplicatedIoPath)) {
             fs.rmSync(duplicatedIoPath, { recursive: true, force: true });
             fs.mkdirSync(duplicatedIoPath, { recursive: true });
@@ -1437,7 +1440,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const scenarioName = path.basename(scenarioPath);
         const sudoEnabled = this.isSudoEnabledForScenario(scenarioPath);
         const scenarioFilter = this.filter ? this.filter : 'None';
-        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'name';
+        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'recent';
         const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
 
@@ -1455,13 +1458,13 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private applyIoFolderHover(node: ScenarioNode): void {
         const scenarioPath = node.scenarioRootPath ?? node.uri.fsPath;
         const scenarioName = path.basename(scenarioPath);
-        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'name';
+        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'recent';
         const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
 
         node.tooltip = [
             `Scenario: ${scenarioName}`,
-            `Folder: ${FOLDER_NAMES.scenarioIo}`,
+            `Folder: ${getScenarioIoFolderName()}`,
             `Run sort: ${this.formatSortMode(runSortMode)}`,
             `Run tag filter: ${activeRunTagFilter}`,
             `Sudo: ${this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'}`,
@@ -1481,7 +1484,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             node.description = tags.map(tag => formatTagChip(tag)).join(' ');
         }
 
-        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'name';
+        const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'recent';
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
         node.tooltip = [
             `Run: ${runName}`,
