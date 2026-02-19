@@ -46,10 +46,21 @@ interface ScenarioRunContext {
     useSudo: boolean;
 }
 
+export interface LastExecutionInfo {
+    scenarioName: string;
+    scenarioPath: string;
+    runPath?: string;
+    runName?: string;
+    exitCode?: number;
+    timestampMs: number;
+}
+
 // Main provider for scenarios, run outputs, and run tagging workflows.
 export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private readonly changeEmitter = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this.changeEmitter.event;
+    private readonly lastExecutionEmitter = new vscode.EventEmitter<LastExecutionInfo | undefined>();
+    readonly onDidChangeLastExecution = this.lastExecutionEmitter.event;
 
     private filter = '';
     private readonly output = vscode.window.createOutputChannel('Scenario Toolkit');
@@ -62,13 +73,16 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private readonly runFilterTagIdsByScenario = new Map<string, string[]>();
     private globalRunFlags = '';
     private readonly sudoExecutionByScenario = new Map<string, boolean>();
+    private lastExecutionInfo?: LastExecutionInfo;
 
     constructor(private readonly state: vscode.Memento) {
         this.loadState();
         this.ensureDefaultTags();
+        this.updateLastExecutionFromFilesystem();
     }
 
     refresh(): void {
+        this.updateLastExecutionFromFilesystem();
         this.changeEmitter.fire();
     }
 
@@ -81,6 +95,11 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     dispose(): void {
         this.output.dispose();
+        this.lastExecutionEmitter.dispose();
+    }
+
+    getLastExecutionInfo(): LastExecutionInfo | undefined {
+        return this.lastExecutionInfo;
     }
 
     setFilter(value: string): void {
@@ -754,7 +773,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             void vscode.window.showErrorMessage('Scenario run failed: could not start process.');
             return;
         }
-        this.watchProcessExit(child, '[exit]', 'Scenario process exited with code');
+        this.watchProcessExit(child, '[exit]', 'Scenario process exited with code', context);
     }
 
     // Run scenario with VS Code debugger using an ephemeral Python launch configuration.
@@ -789,7 +808,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
                 void vscode.window.showErrorMessage('Scenario debug run failed: could not start process.');
                 return;
             }
-            this.watchProcessExit(child, '[debug-sudo-exit]', 'Scenario debug process exited with code');
+            this.watchProcessExit(child, '[debug-sudo-exit]', 'Scenario debug process exited with code', context);
 
             const ready = await this.waitForDebugServer(port, 10000);
             if (!ready) {
@@ -863,6 +882,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         child.on('close', code => {
             this.output.appendLine(`[run-screen-exit] code=${code ?? 'unknown'}`);
             this.output.show(true);
+            this.updateLastExecutionFromFilesystem();
             if (code === 0) {
                 void vscode.window.showInformationMessage(
                     `Scenario started in detached screen session '${sessionName}'. Attach with: screen -r ${sessionName}`
@@ -880,7 +900,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const basePath = getBasePath();
         if (!basePath || !existsDir(basePath)) {
             void vscode.window.showWarningMessage(
-                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath} to a valid folder before running.`
+                `Open a folder in this window or enable ${CONFIG_ROOT}.${SETTINGS_KEYS.forceSettingsBasePath} and set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath}.`
             );
             return undefined;
         }
@@ -1123,15 +1143,134 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private watchProcessExit(
         child: ChildProcessWithoutNullStreams,
         logPrefix: string,
-        nonZeroWarningPrefix: string
+        nonZeroWarningPrefix: string,
+        context?: ScenarioRunContext
     ): void {
         child.on('close', code => {
             this.output.appendLine(`${logPrefix} code=${code ?? 'unknown'}`);
             this.output.show(true);
+            if (context) {
+                this.updateLastExecutionFromFilesystem();
+            }
             if (code !== 0) {
                 void vscode.window.showWarningMessage(`${nonZeroWarningPrefix} ${code ?? 'unknown'}.`);
             }
         });
+    }
+
+    private updateLastExecutionFromFilesystem(): void {
+        const nextInfo = this.findLastExecutionFromFilesystem();
+        this.lastExecutionInfo = nextInfo;
+        this.lastExecutionEmitter.fire(nextInfo);
+    }
+
+    private findLastExecutionFromFilesystem(): LastExecutionInfo | undefined {
+        const scenariosRoot = getScenarioPath();
+        if (!scenariosRoot) {
+            return undefined;
+        }
+
+        if (!existsDir(scenariosRoot)) {
+            return undefined;
+        }
+
+        const scenarioNames = listEntriesSorted(scenariosRoot).filter(name => existsDir(path.join(scenariosRoot, name)));
+        let newestScenarioName: string | undefined;
+        let newestRunPath: string | undefined;
+        let newestTimestamp = -1;
+
+        for (const scenarioName of scenarioNames) {
+            const scenarioPath = path.join(scenariosRoot, scenarioName);
+            const candidate = this.findLatestRunCandidateForScenario(scenarioPath);
+            if (!candidate) {
+                continue;
+            }
+            if (candidate.timestampMs > newestTimestamp) {
+                newestTimestamp = candidate.timestampMs;
+                newestScenarioName = scenarioName;
+                newestRunPath = candidate.runPath;
+            }
+        }
+
+        if (!newestScenarioName) {
+            return undefined;
+        }
+
+        return {
+            scenarioName: newestScenarioName,
+            scenarioPath: path.join(scenariosRoot, newestScenarioName),
+            runPath: newestRunPath,
+            runName: newestRunPath ? path.basename(newestRunPath) : undefined,
+            timestampMs: newestTimestamp
+        };
+    }
+
+    private findLatestRunCandidateForScenario(
+        scenarioPath: string
+    ): { runPath?: string; timestampMs: number } | undefined {
+        const ioPath = path.join(scenarioPath, getScenarioIoFolderName());
+        if (!existsDir(ioPath)) {
+            return undefined;
+        }
+
+        const latestPath = this.findLatestPathRecursive(ioPath);
+        if (!latestPath) {
+            return undefined;
+        }
+
+        const relative = path.relative(ioPath, latestPath);
+        const runFolder = relative.split(path.sep)[0];
+        if (!runFolder) {
+            return undefined;
+        }
+
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(latestPath);
+        } catch {
+            return undefined;
+        }
+
+        return {
+            runPath: path.join(ioPath, runFolder),
+            timestampMs: stat.mtimeMs
+        };
+    }
+
+    private findLatestPathRecursive(rootPath: string): string | undefined {
+        let latestPath: string | undefined;
+        let latestMtime = -1;
+
+        const visit = (currentPath: string): void => {
+            let entries: fs.Dirent[];
+            try {
+                entries = fs.readdirSync(currentPath, { withFileTypes: true });
+            } catch {
+                return;
+            }
+
+            for (const entry of entries) {
+                const entryPath = path.join(currentPath, entry.name);
+                let stat: fs.Stats;
+                try {
+                    stat = fs.statSync(entryPath);
+                } catch {
+                    continue;
+                }
+
+                if (stat.mtimeMs > latestMtime) {
+                    latestMtime = stat.mtimeMs;
+                    latestPath = entryPath;
+                }
+
+                if (entry.isDirectory()) {
+                    visit(entryPath);
+                }
+            }
+        };
+
+        visit(rootPath);
+        return latestPath;
     }
 
     // Detect venv interpreter and keep toolkit/python extension settings aligned.

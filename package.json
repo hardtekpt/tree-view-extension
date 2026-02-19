@@ -16,7 +16,12 @@
     "scenarioToolkit.basePath": {
      "type": "string",
      "default": "",
-     "description": "Root containing src and scenarios"
+     "description": "Root containing src and scenarios. Used only when 'Force Settings Base Path' is enabled, or as fallback when no folder is open."
+    },
+    "scenarioToolkit.forceSettingsBasePath": {
+     "type": "boolean",
+     "default": false,
+     "description": "When enabled, always use 'scenarioToolkit.basePath'. When disabled, use the currently opened folder in this VS Code window."
     },
     "scenarioToolkit.pythonCommand": {
      "type": "string",
@@ -68,6 +73,10 @@
      "id": "configInspector",
      "name": "Config Inspector",
      "type": "webview"
+    },
+    {
+     "id": "programInfo",
+     "name": "Program Info"
     }
    ]
   },
@@ -91,6 +100,11 @@
     "command": "filesystem.copyPath",
     "title": "Copy Path",
     "icon": "$(link)"
+   },
+   {
+    "command": "toolkit.copyTextValue",
+    "title": "Copy Value",
+    "icon": "$(copy)"
    },
    {
     "command": "scenario.run",

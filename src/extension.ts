@@ -6,6 +6,7 @@ import { ConfigInspectorProvider } from './configInspector/configInspectorProvid
 import { createWatchers } from './extension/watchers';
 import { revealExpandedPaths } from './extension/treeReveal';
 import { DevProvider } from './providers/devProvider';
+import { ProgramInfoProvider } from './providers/programInfoProvider';
 import { ScenarioProvider } from './providers/scenarioProvider';
 import { SrcProvider } from './providers/srcProvider';
 import { openRunAnalysisPanel } from './runAnalysis/runAnalysisPanel';
@@ -17,6 +18,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const devProvider = new DevProvider();
     const srcProvider = new SrcProvider();
     const scenarioProvider = new ScenarioProvider(context.workspaceState);
+    const programInfoProvider = new ProgramInfoProvider(scenarioProvider);
     const configInspectorProvider = new ConfigInspectorProvider(context);
     const srcExpanded = new Set<string>();
     const scenarioExpanded = new Set<string>();
@@ -36,6 +38,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const scenarioTree = vscode.window.createTreeView(VIEW_IDS.scenarioExplorer, {
         treeDataProvider: scenarioProvider,
         showCollapseAll: true
+    });
+    const programInfoTree = vscode.window.createTreeView(VIEW_IDS.programInfo, {
+        treeDataProvider: programInfoProvider,
+        showCollapseAll: false
     });
 
     context.subscriptions.push(
@@ -96,7 +102,9 @@ export function activate(context: vscode.ExtensionContext): void {
         devTree,
         srcTree,
         scenarioTree,
+        programInfoTree,
         scenarioProvider,
+        programInfoProvider,
         vscode.window.registerWebviewViewProvider(VIEW_IDS.configInspector, configInspectorProvider)
     );
 
@@ -108,6 +116,7 @@ export function activate(context: vscode.ExtensionContext): void {
         watcherState.rebuild(getBasePath(), getScenarioPath());
         srcProvider.refresh();
         scenarioProvider.refresh();
+        programInfoProvider.refresh();
         scheduleDefaultWorkspaceSave();
     };
 
@@ -119,6 +128,7 @@ export function activate(context: vscode.ExtensionContext): void {
     };
 
     syncPythonInterpreter();
+    programInfoProvider.refresh();
     workspaceManager.initialize();
 
     registerCommands(context, { devProvider, scenarioProvider }, {
@@ -151,10 +161,17 @@ export function activate(context: vscode.ExtensionContext): void {
                 return;
             }
 
-            if (event.affectsConfiguration(`${CONFIG_ROOT}.${SETTINGS_KEYS.basePath}`)) {
+            if (
+                event.affectsConfiguration(`${CONFIG_ROOT}.${SETTINGS_KEYS.basePath}`) ||
+                event.affectsConfiguration(`${CONFIG_ROOT}.${SETTINGS_KEYS.forceSettingsBasePath}`)
+            ) {
                 syncPythonInterpreter();
             }
 
+            refreshToolkit();
+        }),
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            syncPythonInterpreter();
             refreshToolkit();
         })
     );

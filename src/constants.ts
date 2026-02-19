@@ -7,11 +7,13 @@ export const VIEW_IDS = {
     devArea: 'devArea',
     srcExplorer: 'srcExplorer',
     scenarioExplorer: 'scenarioExplorer',
-    configInspector: 'configInspector'
+    configInspector: 'configInspector',
+    programInfo: 'programInfo'
 } as const;
 
 export const SETTINGS_KEYS = {
     basePath: 'basePath',
+    forceSettingsBasePath: 'forceSettingsBasePath',
     pythonCommand: 'pythonCommand',
     runCommandTemplate: 'runCommandTemplate',
     scenarioConfigsFolderName: 'scenarioConfigsFolderName',
@@ -20,6 +22,7 @@ export const SETTINGS_KEYS = {
 } as const;
 
 export const DEFAULTS = {
+    forceSettingsBasePath: false,
     pythonCommand: 'python',
     runCommandTemplate: 'run.py <scenario_name>',
     scenarioConfigsFolderName: 'configs',
@@ -87,6 +90,7 @@ export const STORAGE_KEYS = {
 
 export const COMMANDS = {
     openFile: 'scenario.openFile',
+    copyTextValue: 'toolkit.copyTextValue',
     copyFileSystemItem: 'filesystem.copy',
     pasteFileSystemItem: 'filesystem.paste',
     deleteFileSystemItem: 'filesystem.delete',

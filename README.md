@@ -45,6 +45,7 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 ## Settings
 
 - `scenarioToolkit.basePath`: project root path.
+- `scenarioToolkit.forceSettingsBasePath`: when `false` (default), base path is the open folder for this VS Code window; when `true`, uses `scenarioToolkit.basePath`.
 - `scenarioToolkit.pythonCommand`: Python executable fallback (used if no local root-level venv is auto-detected).
 - `scenarioToolkit.runCommandTemplate`: command template args with `<scenario_name>` placeholder (default `run.py <scenario_name>`).
 - `scenarioToolkit.scenarioConfigsFolderName`: folder name used for scenario config files (default `configs`).

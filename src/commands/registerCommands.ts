@@ -25,6 +25,13 @@ export function registerCommands(
 
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.openFile, openFile),
+        vscode.commands.registerCommand(COMMANDS.copyTextValue, async (value?: string) => {
+            if (!value) {
+                return;
+            }
+            await vscode.env.clipboard.writeText(value);
+            void vscode.window.showInformationMessage(`Copied: ${value}`);
+        }),
         vscode.commands.registerCommand(COMMANDS.copyFileSystemItem, (arg: MaybeNodeArg) => {
             const uri = asUri(arg);
             if (!uri || !fs.existsSync(uri.fsPath)) {

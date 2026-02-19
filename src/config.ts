@@ -8,8 +8,17 @@ function config() {
 }
 
 export function getBasePath(): string | undefined {
-    const value = config().get<string>(SETTINGS_KEYS.basePath)?.trim();
-    return value ? value : undefined;
+    const settingsBasePath = config().get<string>(SETTINGS_KEYS.basePath)?.trim();
+    if (getForceSettingsBasePath()) {
+        return settingsBasePath ? settingsBasePath : undefined;
+    }
+
+    const workspaceBasePath = getFirstWorkspaceFolderPath();
+    if (workspaceBasePath) {
+        return workspaceBasePath;
+    }
+
+    return settingsBasePath ? settingsBasePath : undefined;
 }
 
 export function getSourcePath(): string | undefined {
@@ -30,6 +39,10 @@ export function getRunCommandTemplate(): string {
     return config().get<string>(SETTINGS_KEYS.runCommandTemplate, DEFAULTS.runCommandTemplate);
 }
 
+export function getForceSettingsBasePath(): boolean {
+    return config().get<boolean>(SETTINGS_KEYS.forceSettingsBasePath, DEFAULTS.forceSettingsBasePath);
+}
+
 export function getScenarioConfigsFolderName(): string {
     return sanitizeFolderName(
         config().get<string>(SETTINGS_KEYS.scenarioConfigsFolderName, DEFAULTS.scenarioConfigsFolderName),
@@ -47,4 +60,12 @@ export function getScenarioIoFolderName(): string {
 function sanitizeFolderName(value: string | undefined, fallback: string): string {
     const cleaned = (value ?? '').trim().replace(/[\\/]+/g, '');
     return cleaned.length > 0 ? cleaned : fallback;
+}
+
+function getFirstWorkspaceFolderPath(): string | undefined {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+        return undefined;
+    }
+    return folder.uri.scheme === 'file' ? folder.uri.fsPath : undefined;
 }
