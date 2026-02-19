@@ -1,6 +1,7 @@
 // Extension-level constants shared by activation, providers, and command wiring.
 export const CONFIG_ROOT = 'scenarioToolkit';
 export const PYTHON_CONFIG_ROOT = 'python';
+export const PYTHON_DEFAULT_INTERPRETER_PATH_KEY = 'defaultInterpreterPath';
 
 export const VIEW_IDS = {
     toolkitContainer: 'toolkit',
@@ -11,10 +12,6 @@ export const VIEW_IDS = {
     programInfo: 'programInfo'
 } as const;
 
-export const SETTINGS_KEYS = {
-    pythonDefaultInterpreterPath: 'defaultInterpreterPath'
-} as const;
-
 export const DEFAULTS = {
     pythonCommand: 'python',
     runCommandTemplate: 'run.py <scenario_name>',
@@ -23,7 +20,6 @@ export const DEFAULTS = {
 } as const;
 
 export const FOLDER_NAMES = {
-    sourceRoot: 'src',
     scenariosRoot: 'scenarios',
     toolkitStateDir: '.scenario-toolkit'
 } as const;
@@ -76,7 +72,6 @@ export const STORAGE_KEYS = {
     runTagsByPath: `${CONFIG_ROOT}.runTagsByPath`,
     runFilterTagIdsByScenario: `${CONFIG_ROOT}.runFilterTagIdsByScenario`,
     globalRunFlags: `${CONFIG_ROOT}.globalRunFlags`,
-    sudoExecutionEnabled: `${CONFIG_ROOT}.sudoExecutionEnabled`,
     sudoExecutionByScenario: `${CONFIG_ROOT}.sudoExecutionByScenario`,
     lastWorkspaceConfigPath: `${CONFIG_ROOT}.lastWorkspaceConfigPath`
 } as const;

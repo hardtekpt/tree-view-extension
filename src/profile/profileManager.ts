@@ -51,7 +51,7 @@ export class ProfileManager implements vscode.Disposable {
     async initialize(): Promise<void> {
         await this.ensureStorage();
         this.load();
-        await this.resolveActiveProfile(true);
+        await this.resolveActiveProfile();
         this.initialized = true;
         this.changeEmitter.fire();
     }
@@ -65,7 +65,7 @@ export class ProfileManager implements vscode.Disposable {
     }
 
     async handleWorkspaceFoldersChanged(): Promise<void> {
-        await this.resolveActiveProfile(false);
+        await this.resolveActiveProfile();
         this.changeEmitter.fire();
     }
 
@@ -168,7 +168,7 @@ export class ProfileManager implements vscode.Disposable {
         return vscode.Uri.joinPath(this.context.globalStorageUri, BINDINGS_FILE);
     }
 
-    private async resolveActiveProfile(isStartup: boolean): Promise<void> {
+    private async resolveActiveProfile(): Promise<void> {
         const workspacePath = this.getCurrentWorkspacePath();
         if (!workspacePath) {
             this.activeProfile = undefined;
@@ -185,10 +185,6 @@ export class ProfileManager implements vscode.Disposable {
         }
 
         this.activeProfile = undefined;
-        if (!this.initialized || isStartup) {
-            await this.promptToCreateProfileForWorkspace(workspacePath);
-            return;
-        }
         await this.promptToCreateProfileForWorkspace(workspacePath);
     }
 

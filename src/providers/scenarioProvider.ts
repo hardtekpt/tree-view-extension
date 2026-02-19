@@ -11,7 +11,7 @@ import {
     getScenarioIoFolderName,
     getScenarioPath
 } from '../config';
-import { DEFAULTS, FILE_EXTENSIONS, FOLDER_NAMES, PYTHON_CONFIG_ROOT, SETTINGS_KEYS } from '../constants';
+import { DEFAULTS, FILE_EXTENSIONS, FOLDER_NAMES, PYTHON_CONFIG_ROOT, PYTHON_DEFAULT_INTERPRETER_PATH_KEY } from '../constants';
 import { ScenarioNode } from '../nodes/scenarioNode';
 import { existsDir, uniquePath, listEntriesSorted } from '../utils/fileSystem';
 import { toPathKey } from '../utils/pathKey';
@@ -1279,9 +1279,9 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     private async updatePythonConfiguration(pythonPath: string): Promise<void> {
         const pythonExtensionConfig = vscode.workspace.getConfiguration(PYTHON_CONFIG_ROOT);
-        const currentInterpreter = pythonExtensionConfig.get<string>(SETTINGS_KEYS.pythonDefaultInterpreterPath);
+        const currentInterpreter = pythonExtensionConfig.get<string>(PYTHON_DEFAULT_INTERPRETER_PATH_KEY);
         if (currentInterpreter !== pythonPath) {
-            await safeUpdateConfiguration(pythonExtensionConfig, SETTINGS_KEYS.pythonDefaultInterpreterPath, pythonPath);
+            await safeUpdateConfiguration(pythonExtensionConfig, PYTHON_DEFAULT_INTERPRETER_PATH_KEY, pythonPath);
         }
     }
 

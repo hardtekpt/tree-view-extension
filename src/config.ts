@@ -7,11 +7,6 @@ export function getBasePath(): string | undefined {
     return getProfileManager()?.getActiveProfile()?.basePath;
 }
 
-export function getSourcePath(): string | undefined {
-    const base = getBasePath();
-    return base ? base : undefined;
-}
-
 export function getScenarioPath(): string | undefined {
     const base = getBasePath();
     const scenariosRoot = getScenarioRootFolder();
@@ -59,4 +54,3 @@ function sanitizeSegment(value: string | undefined, fallback: string): string {
     const cleaned = (value ?? '').trim().replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
     return cleaned.length > 0 ? cleaned : fallback;
 }
-

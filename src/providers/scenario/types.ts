@@ -20,6 +20,5 @@ export interface ScenarioWorkspaceState {
     runTagsByPath: Record<string, string[]>;
     runFilterTagIdsByScenario: Record<string, string[]>;
     globalRunFlags: string;
-    sudoExecutionEnabled?: boolean;
     sudoExecutionByScenario?: Record<string, boolean>;
 }
