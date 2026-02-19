@@ -12,17 +12,10 @@ export const VIEW_IDS = {
 } as const;
 
 export const SETTINGS_KEYS = {
-    basePath: 'basePath',
-    forceSettingsBasePath: 'forceSettingsBasePath',
-    pythonCommand: 'pythonCommand',
-    runCommandTemplate: 'runCommandTemplate',
-    scenarioConfigsFolderName: 'scenarioConfigsFolderName',
-    scenarioIoFolderName: 'scenarioIoFolderName',
     pythonDefaultInterpreterPath: 'defaultInterpreterPath'
 } as const;
 
 export const DEFAULTS = {
-    forceSettingsBasePath: false,
     pythonCommand: 'python',
     runCommandTemplate: 'run.py <scenario_name>',
     scenarioConfigsFolderName: 'configs',
@@ -91,6 +84,11 @@ export const STORAGE_KEYS = {
 export const COMMANDS = {
     openFile: 'scenario.openFile',
     copyTextValue: 'toolkit.copyTextValue',
+    createProfile: 'profiles.create',
+    editCurrentProfile: 'profiles.editCurrent',
+    rebindCurrentWorkspace: 'profiles.rebindCurrentWorkspace',
+    validateCurrentProfile: 'profiles.validateCurrent',
+    openProfileStorage: 'profiles.openStorageFile',
     copyFileSystemItem: 'filesystem.copy',
     pasteFileSystemItem: 'filesystem.paste',
     deleteFileSystemItem: 'filesystem.delete',

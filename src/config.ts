@@ -1,71 +1,62 @@
 import * as path from 'path';
-import * as vscode from 'vscode';
-import { CONFIG_ROOT, DEFAULTS, FOLDER_NAMES, SETTINGS_KEYS } from './constants';
-
-// Centralized access to extension settings.
-function config() {
-    return vscode.workspace.getConfiguration(CONFIG_ROOT);
-}
+import { DEFAULTS } from './constants';
+import { findPythonInBasePath } from './providers/scenario/runtimeUtils';
+import { getProfileManager } from './profile/profileManager';
 
 export function getBasePath(): string | undefined {
-    const settingsBasePath = config().get<string>(SETTINGS_KEYS.basePath)?.trim();
-    if (getForceSettingsBasePath()) {
-        return settingsBasePath ? settingsBasePath : undefined;
-    }
-
-    const workspaceBasePath = getFirstWorkspaceFolderPath();
-    if (workspaceBasePath) {
-        return workspaceBasePath;
-    }
-
-    return settingsBasePath ? settingsBasePath : undefined;
+    return getProfileManager()?.getActiveProfile()?.basePath;
 }
 
 export function getSourcePath(): string | undefined {
     const base = getBasePath();
-    return base ? path.join(base, FOLDER_NAMES.sourceRoot) : undefined;
+    return base ? base : undefined;
 }
 
 export function getScenarioPath(): string | undefined {
     const base = getBasePath();
-    return base ? path.join(base, FOLDER_NAMES.scenariosRoot) : undefined;
+    const scenariosRoot = getScenarioRootFolder();
+    return base ? path.join(base, scenariosRoot) : undefined;
 }
 
 export function getPythonCommand(): string {
-    return config().get<string>(SETTINGS_KEYS.pythonCommand, DEFAULTS.pythonCommand);
+    const profile = getProfileManager()?.getActiveProfile();
+    if (!profile) {
+        return DEFAULTS.pythonCommand;
+    }
+
+    if (profile.pythonStrategy === 'fixedPath') {
+        return profile.pythonPath?.trim() || DEFAULTS.pythonCommand;
+    }
+
+    return findPythonInBasePath(profile.basePath) ?? DEFAULTS.pythonCommand;
 }
 
 export function getRunCommandTemplate(): string {
-    return config().get<string>(SETTINGS_KEYS.runCommandTemplate, DEFAULTS.runCommandTemplate);
-}
-
-export function getForceSettingsBasePath(): boolean {
-    return config().get<boolean>(SETTINGS_KEYS.forceSettingsBasePath, DEFAULTS.forceSettingsBasePath);
+    const template = getProfileManager()?.getActiveProfile()?.runCommandTemplate?.trim();
+    return template && template.length > 0 ? template : DEFAULTS.runCommandTemplate;
 }
 
 export function getScenarioConfigsFolderName(): string {
-    return sanitizeFolderName(
-        config().get<string>(SETTINGS_KEYS.scenarioConfigsFolderName, DEFAULTS.scenarioConfigsFolderName),
-        DEFAULTS.scenarioConfigsFolderName
-    );
+    const value = getProfileManager()?.getActiveProfile()?.scenarioConfigsFolderName;
+    return sanitizeFolderName(value, DEFAULTS.scenarioConfigsFolderName);
 }
 
 export function getScenarioIoFolderName(): string {
-    return sanitizeFolderName(
-        config().get<string>(SETTINGS_KEYS.scenarioIoFolderName, DEFAULTS.scenarioIoFolderName),
-        DEFAULTS.scenarioIoFolderName
-    );
+    const value = getProfileManager()?.getActiveProfile()?.scenarioIoFolderName;
+    return sanitizeFolderName(value, DEFAULTS.scenarioIoFolderName);
+}
+
+export function getScenarioRootFolder(): string {
+    const value = getProfileManager()?.getActiveProfile()?.scenariosRoot;
+    return sanitizeSegment(value, 'scenarios');
 }
 
 function sanitizeFolderName(value: string | undefined, fallback: string): string {
-    const cleaned = (value ?? '').trim().replace(/[\\/]+/g, '');
+    return sanitizeSegment(value, fallback).replace(/[\\/]+/g, '');
+}
+
+function sanitizeSegment(value: string | undefined, fallback: string): string {
+    const cleaned = (value ?? '').trim().replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
     return cleaned.length > 0 ? cleaned : fallback;
 }
 
-function getFirstWorkspaceFolderPath(): string | undefined {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder) {
-        return undefined;
-    }
-    return folder.uri.scheme === 'file' ? folder.uri.fsPath : undefined;
-}

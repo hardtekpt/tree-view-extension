@@ -1,11 +1,12 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { getBasePath } from '../config';
+import { getBasePath, getPythonCommand } from '../config';
 import { COMMANDS, DEFAULTS } from '../constants';
+import { getProfileManager } from '../profile/profileManager';
 import type { LastExecutionInfo, ScenarioProvider } from './scenarioProvider';
 import { findPythonInBasePath } from './scenario/runtimeUtils';
 
-type ProgramInfoSection = 'currentProgram' | 'lastExecution';
+type ProgramInfoSection = 'currentProfile' | 'currentProgram' | 'lastExecution';
 
 class ProgramInfoItem extends vscode.TreeItem {
     constructor(
@@ -46,9 +47,14 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
     getChildren(element?: ProgramInfoItem): ProgramInfoItem[] {
         if (!element) {
             return [
+                this.createSectionItem('Current Profile', 'currentProfile'),
                 this.createSectionItem('Current Program', 'currentProgram'),
                 this.createSectionItem('Last Execution', 'lastExecution')
             ];
+        }
+
+        if (element.section === 'currentProfile') {
+            return this.getCurrentProfileItems();
         }
 
         if (element.section === 'currentProgram') {
@@ -62,17 +68,74 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         return [];
     }
 
-    private createSectionItem(label: string, section: ProgramInfoSection): ProgramInfoItem {
+    private createSectionItem(label: string, section: ProgramInfoSection | 'currentProfile'): ProgramInfoItem {
         const item = new ProgramInfoItem(label, vscode.TreeItemCollapsibleState.Expanded, section);
         item.contextValue = 'programInfoSection';
-        item.iconPath = new vscode.ThemeIcon(section === 'currentProgram' ? 'settings-gear' : 'history');
+        item.iconPath = new vscode.ThemeIcon(
+            section === 'currentProgram' ? 'settings-gear' : section === 'lastExecution' ? 'history' : 'account'
+        );
         return item;
+    }
+
+    private getCurrentProfileItems(): ProgramInfoItem[] {
+        const profile = getProfileManager()?.getActiveProfile();
+        if (!profile) {
+            const emptyItem = new ProgramInfoItem('No active profile bound to this workspace.', vscode.TreeItemCollapsibleState.None);
+            emptyItem.iconPath = new vscode.ThemeIcon('circle-slash');
+            return [emptyItem];
+        }
+
+        const nameItem = new ProgramInfoItem(`Name: ${profile.name}`, vscode.TreeItemCollapsibleState.None);
+        nameItem.iconPath = new vscode.ThemeIcon('symbol-key');
+
+        const idItem = new ProgramInfoItem(`ID: ${profile.id}`, vscode.TreeItemCollapsibleState.None);
+        idItem.iconPath = new vscode.ThemeIcon('key');
+        idItem.command = {
+            command: COMMANDS.copyTextValue,
+            title: 'Copy Profile ID',
+            arguments: [profile.id]
+        };
+        idItem.tooltip = `${profile.id}\nClick to copy`;
+
+        const strategyItem = new ProgramInfoItem(
+            `Python strategy: ${profile.pythonStrategy === 'fixedPath' ? 'Fixed path' : 'Auto venv'}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        strategyItem.iconPath = new vscode.ThemeIcon('symbol-method');
+
+        const structureItem = new ProgramInfoItem(
+            `Structure: ${profile.scenariosRoot}/<scenario>/{${profile.scenarioConfigsFolderName}, ${profile.scenarioIoFolderName}}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        structureItem.iconPath = new vscode.ThemeIcon('folder-opened');
+        structureItem.tooltip = `Scenarios root: ${profile.scenariosRoot}\nConfigs: ${profile.scenarioConfigsFolderName}\nOutputs: ${profile.scenarioIoFolderName}`;
+
+        const commandItem = new ProgramInfoItem(
+            `Run template: ${profile.runCommandTemplate}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        commandItem.iconPath = new vscode.ThemeIcon('terminal-cmd');
+        commandItem.command = {
+            command: COMMANDS.copyTextValue,
+            title: 'Copy Run Template',
+            arguments: [profile.runCommandTemplate]
+        };
+        commandItem.tooltip = `${profile.runCommandTemplate}\nClick to copy`;
+
+        const updatedItem = new ProgramInfoItem(
+            `Updated: ${new Date(profile.updatedAtMs).toLocaleString()}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        updatedItem.iconPath = new vscode.ThemeIcon('clock');
+
+        return [nameItem, idItem, strategyItem, structureItem, commandItem, updatedItem];
     }
 
     private getCurrentProgramItems(): ProgramInfoItem[] {
         const basePath = getBasePath();
-        const venvPython = basePath ? findPythonInBasePath(basePath) : undefined;
-        const pythonPath = venvPython ?? DEFAULTS.pythonCommand;
+        const activeProfile = getProfileManager()?.getActiveProfile();
+        const venvPython = activeProfile?.pythonStrategy === 'autoVenv' && basePath ? findPythonInBasePath(basePath) : undefined;
+        const pythonPath = getPythonCommand() || DEFAULTS.pythonCommand;
         const venvName = venvPython ? getVenvNameFromPythonPath(venvPython) : undefined;
 
         const baseItem = new ProgramInfoItem(
@@ -102,9 +165,12 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
             arguments: [pythonPath]
         };
 
-        const envLabel = venvPython
-            ? `Environment: Virtual environment (${venvName ?? 'unknown'})`
-            : 'Environment: System Python fallback';
+        const envLabel =
+            activeProfile?.pythonStrategy === 'fixedPath'
+                ? 'Environment: Fixed python path'
+                : venvPython
+                    ? `Environment: Virtual environment (${venvName ?? 'unknown'})`
+                    : 'Environment: System Python fallback';
         const envItem = new ProgramInfoItem(envLabel, vscode.TreeItemCollapsibleState.None);
         envItem.iconPath = new vscode.ThemeIcon(venvPython ? 'vm' : 'terminal');
         envItem.tooltip = envLabel;

@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import { getBasePath, getScenarioPath } from './config';
-import { CONFIG_ROOT, SETTINGS_KEYS, TREE_COMMANDS, VIEW_IDS } from './constants';
+import { TREE_COMMANDS, VIEW_IDS } from './constants';
 import { registerCommands } from './commands/registerCommands';
 import { ConfigInspectorProvider } from './configInspector/configInspectorProvider';
 import { createWatchers } from './extension/watchers';
 import { revealExpandedPaths } from './extension/treeReveal';
+import { initializeProfileManager } from './profile/profileManager';
 import { DevProvider } from './providers/devProvider';
 import { ProgramInfoProvider } from './providers/programInfoProvider';
 import { ScenarioProvider } from './providers/scenarioProvider';
@@ -15,6 +16,7 @@ import { TreeViewWorkspaceState } from './workspace/treeViewState';
 
 // Extension entrypoint: compose providers, views, commands, and watchers.
 export function activate(context: vscode.ExtensionContext): void {
+    const profileManager = initializeProfileManager(context);
     const devProvider = new DevProvider();
     const srcProvider = new SrcProvider();
     const scenarioProvider = new ScenarioProvider(context.workspaceState);
@@ -99,6 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
     };
 
     context.subscriptions.push(
+        profileManager,
         devTree,
         srcTree,
         scenarioTree,
@@ -141,7 +144,8 @@ export function activate(context: vscode.ExtensionContext): void {
         },
         openRunAnalysis: uri => {
             void openRunAnalysisPanel(uri);
-        }
+        },
+        profileManager
     });
 
     context.subscriptions.push(
@@ -156,25 +160,22 @@ export function activate(context: vscode.ExtensionContext): void {
         srcTree.onDidCollapseElement(() => scheduleDefaultWorkspaceSave()),
         scenarioTree.onDidExpandElement(() => scheduleDefaultWorkspaceSave()),
         scenarioTree.onDidCollapseElement(() => scheduleDefaultWorkspaceSave()),
-        vscode.workspace.onDidChangeConfiguration(event => {
-            if (!event.affectsConfiguration(CONFIG_ROOT)) {
-                return;
-            }
-
-            if (
-                event.affectsConfiguration(`${CONFIG_ROOT}.${SETTINGS_KEYS.basePath}`) ||
-                event.affectsConfiguration(`${CONFIG_ROOT}.${SETTINGS_KEYS.forceSettingsBasePath}`)
-            ) {
-                syncPythonInterpreter();
-            }
-
+        profileManager.onDidChangeActiveProfile(() => {
+            syncPythonInterpreter();
             refreshToolkit();
         }),
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
-            syncPythonInterpreter();
-            refreshToolkit();
+            void profileManager.handleWorkspaceFoldersChanged().then(() => {
+                syncPythonInterpreter();
+                refreshToolkit();
+            });
         })
     );
+
+    void profileManager.initialize().then(() => {
+        syncPythonInterpreter();
+        refreshToolkit();
+    });
 }
 
 export function deactivate(): void {}

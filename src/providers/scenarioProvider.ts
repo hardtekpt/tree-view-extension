@@ -5,19 +5,19 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as vscode from 'vscode';
 import {
     getBasePath,
+    getPythonCommand,
     getRunCommandTemplate,
     getScenarioConfigsFolderName,
     getScenarioIoFolderName,
     getScenarioPath
 } from '../config';
-import { CONFIG_ROOT, DEFAULTS, FILE_EXTENSIONS, FOLDER_NAMES, PYTHON_CONFIG_ROOT, SETTINGS_KEYS } from '../constants';
+import { DEFAULTS, FILE_EXTENSIONS, FOLDER_NAMES, PYTHON_CONFIG_ROOT, SETTINGS_KEYS } from '../constants';
 import { ScenarioNode } from '../nodes/scenarioNode';
 import { existsDir, uniquePath, listEntriesSorted } from '../utils/fileSystem';
 import { toPathKey } from '../utils/pathKey';
 import { SCENARIO_STORAGE_KEYS } from './scenario/storageKeys';
 import {
     buildScreenSessionName,
-    findPythonInBasePath,
     normalizeRunFlags,
     parseCommandLineArgs,
     quoteIfNeeded,
@@ -88,8 +88,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     async syncPythonInterpreterForBasePath(): Promise<void> {
         const basePath = getBasePath();
-        const pythonPath =
-            basePath && existsDir(basePath) ? (findPythonInBasePath(basePath) ?? DEFAULTS.pythonCommand) : DEFAULTS.pythonCommand;
+        const pythonPath = basePath && existsDir(basePath) ? getPythonCommand() : DEFAULTS.pythonCommand;
         await this.updatePythonConfiguration(pythonPath);
     }
 
@@ -899,9 +898,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private async buildScenarioRunContext(uri: vscode.Uri): Promise<ScenarioRunContext | undefined> {
         const basePath = getBasePath();
         if (!basePath || !existsDir(basePath)) {
-            void vscode.window.showWarningMessage(
-                `Open a folder in this window or enable ${CONFIG_ROOT}.${SETTINGS_KEYS.forceSettingsBasePath} and set ${CONFIG_ROOT}.${SETTINGS_KEYS.basePath}.`
-            );
+            void vscode.window.showWarningMessage('No active program profile for this workspace. Create or bind a profile first.');
             return undefined;
         }
 
@@ -1034,7 +1031,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const template = getRunCommandTemplate().trim();
         if (!template.includes('<scenario_name>')) {
             void vscode.window.showWarningMessage(
-                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.runCommandTemplate} with '<scenario_name>' placeholder.`
+                `Set a valid run command template in the active program profile (must include '<scenario_name>').`
             );
             return undefined;
         }
@@ -1043,7 +1040,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const parts = parseCommandLineArgs(expanded);
         if (parts.length === 0) {
             void vscode.window.showWarningMessage(
-                `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.runCommandTemplate} to a valid command.`
+                'Set a valid run command template in the active program profile.'
             );
             return undefined;
         }
@@ -1052,7 +1049,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             const moduleName = parts[1];
             if (!moduleName) {
                 void vscode.window.showWarningMessage(
-                    `Set ${CONFIG_ROOT}.${SETTINGS_KEYS.runCommandTemplate} to a valid module invocation.`
+                    'Set a valid module-style run command template in the active program profile.'
                 );
                 return undefined;
             }
@@ -1275,18 +1272,12 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     // Detect venv interpreter and keep toolkit/python extension settings aligned.
     private async configurePythonFromLocalVenv(basePath: string): Promise<string> {
-        const pythonPath = findPythonInBasePath(basePath) ?? DEFAULTS.pythonCommand;
+        const pythonPath = existsDir(basePath) ? getPythonCommand() : DEFAULTS.pythonCommand;
         await this.updatePythonConfiguration(pythonPath);
         return pythonPath;
     }
 
     private async updatePythonConfiguration(pythonPath: string): Promise<void> {
-        const toolkitConfig = vscode.workspace.getConfiguration(CONFIG_ROOT);
-        const currentToolkitPython = toolkitConfig.get<string>(SETTINGS_KEYS.pythonCommand, DEFAULTS.pythonCommand);
-        if (currentToolkitPython !== pythonPath) {
-            await safeUpdateConfiguration(toolkitConfig, SETTINGS_KEYS.pythonCommand, pythonPath);
-        }
-
         const pythonExtensionConfig = vscode.workspace.getConfiguration(PYTHON_CONFIG_ROOT);
         const currentInterpreter = pythonExtensionConfig.get<string>(SETTINGS_KEYS.pythonDefaultInterpreterPath);
         if (currentInterpreter !== pythonPath) {

@@ -11,40 +11,6 @@
   "*"
  ],
  "contributes": {
-  "configuration": {
-   "properties": {
-    "scenarioToolkit.basePath": {
-     "type": "string",
-     "default": "",
-     "description": "Root containing src and scenarios. Used only when 'Force Settings Base Path' is enabled, or as fallback when no folder is open."
-    },
-    "scenarioToolkit.forceSettingsBasePath": {
-     "type": "boolean",
-     "default": false,
-     "description": "When enabled, always use 'scenarioToolkit.basePath'. When disabled, use the currently opened folder in this VS Code window."
-    },
-    "scenarioToolkit.pythonCommand": {
-     "type": "string",
-     "default": "python",
-     "description": "Python command used to run scenarios (example: python, py, python3)"
-    },
-    "scenarioToolkit.runCommandTemplate": {
-     "type": "string",
-     "default": "run.py <scenario_name>",
-     "description": "Python command template. Must include <scenario_name>, e.g. main.py <scenario_name>"
-    },
-    "scenarioToolkit.scenarioConfigsFolderName": {
-     "type": "string",
-     "default": "configs",
-     "description": "Folder name inside each scenario containing XML configuration files."
-    },
-    "scenarioToolkit.scenarioIoFolderName": {
-     "type": "string",
-     "default": "io",
-     "description": "Folder name inside each scenario containing output runs."
-    }
-   }
-  },
   "viewsContainers": {
    "activitybar": [
     {
@@ -105,6 +71,31 @@
     "command": "toolkit.copyTextValue",
     "title": "Copy Value",
     "icon": "$(copy)"
+   },
+   {
+    "command": "profiles.create",
+    "title": "Program Profiles: Create",
+    "icon": "$(add)"
+   },
+   {
+    "command": "profiles.editCurrent",
+    "title": "Program Profiles: Edit Current",
+    "icon": "$(edit)"
+   },
+   {
+    "command": "profiles.rebindCurrentWorkspace",
+    "title": "Program Profiles: Rebind Current Workspace",
+    "icon": "$(link)"
+   },
+   {
+    "command": "profiles.validateCurrent",
+    "title": "Program Profiles: Validate Current",
+    "icon": "$(check)"
+   },
+   {
+    "command": "profiles.openStorageFile",
+    "title": "Program Profiles: Open Storage File",
+    "icon": "$(folder-opened)"
    },
    {
     "command": "scenario.run",

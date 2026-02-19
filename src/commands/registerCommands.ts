@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { COMMANDS } from '../constants';
+import { ProfileManager } from '../profile/profileManager';
 import { DevProvider } from '../providers/devProvider';
 import { ScenarioProvider } from '../providers/scenarioProvider';
 import { asNodeArg, asUri, MaybeNodeArg, MaybeUriArg, NodeArg, WithUri } from './commandArgs';
@@ -17,10 +18,11 @@ export function registerCommands(
         resetWorkspace: () => void;
         openConfigInspector: (uri: vscode.Uri) => void;
         openRunAnalysis: (uri: vscode.Uri) => void;
+        profileManager: ProfileManager;
     }
 ): void {
     const { devProvider, scenarioProvider } = providers;
-    const { refreshToolkit, saveWorkspace, loadWorkspace, resetWorkspace, openConfigInspector, openRunAnalysis } = callbacks;
+    const { refreshToolkit, saveWorkspace, loadWorkspace, resetWorkspace, openConfigInspector, openRunAnalysis, profileManager } = callbacks;
     let copiedSourcePath: string | undefined;
 
     context.subscriptions.push(
@@ -31,6 +33,53 @@ export function registerCommands(
             }
             await vscode.env.clipboard.writeText(value);
             void vscode.window.showInformationMessage(`Copied: ${value}`);
+        }),
+        vscode.commands.registerCommand(COMMANDS.createProfile, async () => {
+            await profileManager.createProfileForCurrentWorkspace();
+            refreshToolkit();
+        }),
+        vscode.commands.registerCommand(COMMANDS.editCurrentProfile, async () => {
+            await profileManager.editCurrentProfile();
+            refreshToolkit();
+        }),
+        vscode.commands.registerCommand(COMMANDS.rebindCurrentWorkspace, async () => {
+            await profileManager.rebindCurrentWorkspace();
+            refreshToolkit();
+        }),
+        vscode.commands.registerCommand(COMMANDS.validateCurrentProfile, () => {
+            const result = profileManager.validateActiveProfile();
+            if (result.valid) {
+                void vscode.window.showInformationMessage('Current profile structure is valid.');
+                return;
+            }
+            void vscode.window.showWarningMessage(`Profile validation failed:\n${result.errors.join('\n')}`);
+        }),
+        vscode.commands.registerCommand(COMMANDS.openProfileStorage, async () => {
+            try {
+                const picked = await vscode.window.showQuickPick(
+                    [
+                        { label: 'programProfiles.json', uri: profileManager.getProfilesFileUri(), empty: '{"version":1,"profiles":[]}\n' },
+                        { label: 'workspaceBindings.json', uri: profileManager.getBindingsFileUri(), empty: '{"version":1,"bindings":{}}\n' }
+                    ],
+                    { placeHolder: 'Open profile storage file' }
+                );
+                if (!picked) {
+                    return;
+                }
+
+                await vscode.workspace.fs.createDirectory(profileManager.getStorageFolderUri());
+                try {
+                    await vscode.workspace.fs.stat(picked.uri);
+                } catch {
+                    await vscode.workspace.fs.writeFile(picked.uri, Buffer.from(picked.empty, 'utf8'));
+                }
+
+                const document = await vscode.workspace.openTextDocument(picked.uri);
+                await vscode.window.showTextDocument(document, { preview: false });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                void vscode.window.showErrorMessage(`Could not open profile storage: ${message}`);
+            }
         }),
         vscode.commands.registerCommand(COMMANDS.copyFileSystemItem, (arg: MaybeNodeArg) => {
             const uri = asUri(arg);

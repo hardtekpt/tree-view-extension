@@ -5,11 +5,18 @@ It adds a dedicated Toolkit sidebar to manage source files, scenarios, scenario 
 
 ## Project Layout Expectations
 
-Set `scenarioToolkit.basePath` to a root folder with this structure:
+Scenario Toolkit now uses **Program Profiles** instead of fixed extension settings.
 
-- `<basePath>/src` (source code)
-- `<basePath>/scenarios/<scenario>/<scenarioToolkit.scenarioConfigsFolderName>` (XML config files, default `configs`)
-- `<basePath>/scenarios/<scenario>/<scenarioToolkit.scenarioIoFolderName>` (output run folders/files, default `io`)
+Each profile defines the structure for one Python program, including:
+
+- base path
+- Python strategy/path
+- scenarios root
+- per-scenario config folder name
+- per-scenario output folder name
+- run command template
+
+Profile files are stored in the extension global storage (persistent, outside your program folders).
 
 ## Core Features
 
@@ -44,12 +51,9 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 
 ## Settings
 
-- `scenarioToolkit.basePath`: project root path.
-- `scenarioToolkit.forceSettingsBasePath`: when `false` (default), base path is the open folder for this VS Code window; when `true`, uses `scenarioToolkit.basePath`.
-- `scenarioToolkit.pythonCommand`: Python executable fallback (used if no local root-level venv is auto-detected).
-- `scenarioToolkit.runCommandTemplate`: command template args with `<scenario_name>` placeholder (default `run.py <scenario_name>`).
-- `scenarioToolkit.scenarioConfigsFolderName`: folder name used for scenario config files (default `configs`).
-- `scenarioToolkit.scenarioIoFolderName`: folder name used for scenario output runs (default `io`).
+Project-specific configuration is no longer read from extension settings.
+
+Use Program Profile commands from the Command Palette to create, edit, bind, and validate program structure.
 
 ## Installation (From Source)
 
@@ -57,7 +61,7 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 2. `npm run compile`
 3. Open the repository in VS Code.
 4. Press `F5` to launch the Extension Host.
-5. In the Extension Host, set `scenarioToolkit.basePath`.
+5. In the Extension Host, run `Program Profiles: Create` for your opened workspace folder.
 
 ## Packaging (.vsix)
 
@@ -83,19 +87,36 @@ Set `scenarioToolkit.basePath` to a root folder with this structure:
 
 ## Command Palette Commands
 
-Workspace actions are available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
+Workspace actions:
 
 - `Save Workspace`
 - `Load Workspace`
 - `Refresh Toolkit`
 - `Reset Workspace`
 
-Keywords you can type to find them quickly:
+Program Profile actions:
+
+- `Program Profiles: Create`
+- `Program Profiles: Edit Current`
+- `Program Profiles: Rebind Current Workspace`
+- `Program Profiles: Validate Current`
+
+Startup behavior:
+
+- On activation (and workspace-folder changes), the extension checks if the current workspace has a bound profile.
+- If no profile is bound, it tests a default structure guess.
+- If the structure does not match, it prompts you to create a custom profile or skip.
+
+Quick keywords:
 
 - `workspace save`
 - `workspace load`
 - `refresh toolkit`
 - `workspace reset`
+- `program profiles create`
+- `program profiles edit`
+- `program profiles rebind`
+- `program profiles validate`
 
 ## Refactored Architecture
 
@@ -104,6 +125,7 @@ Keywords you can type to find them quickly:
 - `src/extension/treeReveal.ts`: expanded-node replay.
 - `src/commands/registerCommands.ts`: command registrations.
 - `src/commands/commandArgs.ts`: shared command-argument normalization.
+- `src/profile/profileManager.ts`: profile persistence, workspace binding, wizard, validation.
 - `src/providers/devProvider.ts`: Development Area provider.
 - `src/providers/srcProvider.ts`: Source Explorer provider + DnD.
 - `src/providers/scenarioProvider.ts`: Scenario feature orchestration.
