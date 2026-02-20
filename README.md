@@ -48,7 +48,8 @@ Profile files are stored in the extension global storage (persistent, outside yo
 
 - Workspace Snapshot:
   - Save/load/reset full extension state to/from JSON.
-  - Includes tree expansion state, run/tag/filter/sort/pin state, and global run flags.
+  - Supports a default workspace config and custom workspace config files.
+  - Includes Source Explorer and Scenarios tree expansion state, view visibility state, run/tag/filter/sort/pin state, and global run flags.
 
 ## Settings
 
@@ -94,6 +95,59 @@ Workspace actions:
 - `Load Workspace`
 - `Refresh Toolkit`
 - `Reset Workspace`
+
+## Workspace Config Behavior
+
+The workspace snapshot feature persists extension state to a JSON file.
+
+### Default vs custom workspace config
+
+- Default config path:
+  - `<basePath>/.scenario-toolkit/workspace.json`
+- You can also save/load custom workspace config files anywhere.
+- The extension always tracks one active workspace config file.
+
+### Active config rules
+
+- Autosave always writes to the active workspace config file.
+- `Save Workspace`:
+  - Writes to the selected file and makes it active.
+- `Load Workspace`:
+  - Loads the selected file and makes it active.
+- `Reset Workspace`:
+  - Resets extension state and writes the reset state into the current active file.
+
+### Startup behavior
+
+- On startup, the extension attempts to load the last active workspace config path first.
+- If that file is missing, it falls back to the default config path.
+- If the default file is missing, it creates it and sets it active.
+- Workspace initialization is ordered to avoid startup autosave overwriting a saved config.
+
+### What is saved
+
+- `devArea`: Development Area file list.
+- `scenario`: Scenario state:
+  - scenario filter
+  - scenario/run sorting
+  - scenario/run pinning
+  - tag catalog, tag assignments, tag filters
+  - global run flags
+  - sudo execution per scenario
+- `treeViews`:
+  - `srcExplorerExpanded`
+  - `scenarioExplorerExpanded`
+  - `componentViews` visibility flags:
+    - `devAreaVisible`
+    - `srcExplorerVisible`
+    - `scenarioExplorerVisible`
+    - `programInfoVisible`
+    - `configInspectorVisible`
+
+### Notes
+
+- Program Info tree expansion state is intentionally not persisted; it always uses default collapse behavior.
+- If `srcExplorerVisible` is false, Source Explorer expanded paths are treated as empty in saved state for consistency.
 
 Program Profile actions:
 
