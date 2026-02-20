@@ -70,7 +70,7 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
 
     private createSectionItem(label: string, section: ProgramInfoSection | 'currentProfile'): ProgramInfoItem {
         const item = new ProgramInfoItem(label, vscode.TreeItemCollapsibleState.Expanded, section);
-        item.contextValue = 'programInfoSection';
+        item.contextValue = section === 'currentProfile' ? 'programInfoProfile' : 'programInfoSection';
         item.iconPath = new vscode.ThemeIcon(
             section === 'currentProgram' ? 'settings-gear' : section === 'lastExecution' ? 'history' : 'account'
         );
@@ -82,14 +82,17 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         if (!profile) {
             const emptyItem = new ProgramInfoItem('No active profile bound to this workspace.', vscode.TreeItemCollapsibleState.None);
             emptyItem.iconPath = new vscode.ThemeIcon('circle-slash');
+            emptyItem.contextValue = 'programInfoProfile';
             return [emptyItem];
         }
 
         const nameItem = new ProgramInfoItem(`Name: ${profile.name}`, vscode.TreeItemCollapsibleState.None);
         nameItem.iconPath = new vscode.ThemeIcon('symbol-key');
+        nameItem.contextValue = 'programInfoProfile';
 
         const idItem = new ProgramInfoItem(`ID: ${profile.id}`, vscode.TreeItemCollapsibleState.None);
         idItem.iconPath = new vscode.ThemeIcon('key');
+        idItem.contextValue = 'programInfoProfile';
         idItem.command = {
             command: COMMANDS.copyTextValue,
             title: 'Copy Profile ID',
@@ -102,12 +105,14 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
             vscode.TreeItemCollapsibleState.None
         );
         strategyItem.iconPath = new vscode.ThemeIcon('symbol-method');
+        strategyItem.contextValue = 'programInfoProfile';
 
         const structureItem = new ProgramInfoItem(
             `Structure: ${profile.scenariosRoot}/<scenario>/{${profile.scenarioConfigsFolderName}, ${profile.scenarioIoFolderName}}`,
             vscode.TreeItemCollapsibleState.None
         );
         structureItem.iconPath = new vscode.ThemeIcon('folder-opened');
+        structureItem.contextValue = 'programInfoProfile';
         structureItem.tooltip = `Scenarios root: ${profile.scenariosRoot}\nConfigs: ${profile.scenarioConfigsFolderName}\nOutputs: ${profile.scenarioIoFolderName}`;
 
         const commandItem = new ProgramInfoItem(
@@ -115,6 +120,7 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
             vscode.TreeItemCollapsibleState.None
         );
         commandItem.iconPath = new vscode.ThemeIcon('terminal-cmd');
+        commandItem.contextValue = 'programInfoProfile';
         commandItem.command = {
             command: COMMANDS.copyTextValue,
             title: 'Copy Run Template',
@@ -122,13 +128,21 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         };
         commandItem.tooltip = `${profile.runCommandTemplate}\nClick to copy`;
 
+        const parserCountItem = new ProgramInfoItem(
+            `Filename parsers: ${profile.outputFilenameParsers.length}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        parserCountItem.iconPath = new vscode.ThemeIcon('symbol-struct');
+        parserCountItem.contextValue = 'programInfoProfile';
+
         const updatedItem = new ProgramInfoItem(
             `Updated: ${new Date(profile.updatedAtMs).toLocaleString()}`,
             vscode.TreeItemCollapsibleState.None
         );
         updatedItem.iconPath = new vscode.ThemeIcon('clock');
+        updatedItem.contextValue = 'programInfoProfile';
 
-        return [nameItem, idItem, strategyItem, structureItem, commandItem, updatedItem];
+        return [nameItem, idItem, strategyItem, structureItem, commandItem, parserCountItem, updatedItem];
     }
 
     private getCurrentProgramItems(): ProgramInfoItem[] {

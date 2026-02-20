@@ -143,7 +143,7 @@ export function activate(context: vscode.ExtensionContext): void {
             void configInspectorProvider.openForConfigsFolder(uri);
         },
         openRunAnalysis: uri => {
-            void openRunAnalysisPanel(uri);
+            void openRunAnalysisPanel(uri, scenarioProvider);
         },
         profileManager
     });

@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DEFAULTS, FOLDER_NAMES } from '../constants';
+import { validateFilenameParser } from '../providers/scenario/filenameMetadata';
 import { existsDir } from '../utils/fileSystem';
+import { OutputFilenameParser, OutputFilenameParserField } from './profileTypes';
 
 const PROFILES_FILE = 'programProfiles.json';
 const BINDINGS_FILE = 'workspaceBindings.json';
@@ -19,6 +21,7 @@ export interface ProgramProfile {
     scenarioConfigsFolderName: string;
     scenarioIoFolderName: string;
     runCommandTemplate: string;
+    outputFilenameParsers: OutputFilenameParser[];
     createdAtMs: number;
     updatedAtMs: number;
 }
@@ -299,6 +302,11 @@ export class ProfileManager implements vscode.Disposable {
             return undefined;
         }
 
+        const outputFilenameParsers = await this.configureFilenameParsers(seed?.outputFilenameParsers ?? []);
+        if (!outputFilenameParsers) {
+            return undefined;
+        }
+
         const now = Date.now();
         const profile: ProgramProfile = {
             id: seed?.id ?? createProfileId(),
@@ -310,6 +318,7 @@ export class ProfileManager implements vscode.Disposable {
             scenarioConfigsFolderName: sanitizeFolderName(configsFolder),
             scenarioIoFolderName: sanitizeFolderName(ioFolder),
             runCommandTemplate: runTemplate.trim(),
+            outputFilenameParsers,
             createdAtMs: seed?.createdAtMs ?? now,
             updatedAtMs: now
         };
@@ -353,7 +362,7 @@ export class ProfileManager implements vscode.Disposable {
                     if (!profile?.id || !profile.basePath) {
                         continue;
                     }
-                    this.profiles.set(profile.id, profile as ProgramProfile);
+                    this.profiles.set(profile.id, this.normalizeProfile(profile as ProgramProfile));
                 }
             } catch {}
         }
@@ -398,6 +407,181 @@ export class ProfileManager implements vscode.Disposable {
 
     private getBindingsPath(): string {
         return path.join(this.context.globalStorageUri.fsPath, BINDINGS_FILE);
+    }
+
+    private normalizeProfile(profile: ProgramProfile): ProgramProfile {
+        return {
+            ...profile,
+            outputFilenameParsers: (profile.outputFilenameParsers ?? []).map(parser => ({
+                ...parser,
+                appliesToKind: parser.appliesToKind ?? 'files'
+            }))
+        };
+    }
+
+    private async configureFilenameParsers(
+        seed: OutputFilenameParser[]
+    ): Promise<OutputFilenameParser[] | undefined> {
+        const mode = await vscode.window.showQuickPick(
+            [
+                { label: `Keep existing (${seed.length})`, value: 'keep' as const },
+                { label: `Add parsers to existing (${seed.length})`, value: 'append' as const },
+                { label: 'Replace parser templates', value: 'replace' as const },
+                { label: 'Clear parser templates', value: 'clear' as const }
+            ],
+            { placeHolder: 'Filename metadata parser templates' }
+        );
+        if (!mode) {
+            return undefined;
+        }
+        if (mode.value === 'keep') {
+            return seed;
+        }
+        if (mode.value === 'clear') {
+            return [];
+        }
+
+        const parsers: OutputFilenameParser[] = mode.value === 'append' ? [...seed] : [];
+        while (true) {
+            const parser = await this.collectSingleFilenameParser(parsers.length + 1);
+            if (!parser) {
+                break;
+            }
+            parsers.push(parser);
+
+            const shouldContinue = await vscode.window.showQuickPick(
+                [
+                    { label: 'Add another parser', value: 'yes' },
+                    { label: 'Done', value: 'no' }
+                ],
+                { placeHolder: 'Add another filename parser template?' }
+            );
+            if (!shouldContinue || shouldContinue.value === 'no') {
+                break;
+            }
+        }
+        return parsers;
+    }
+
+    private async collectSingleFilenameParser(index: number): Promise<OutputFilenameParser | undefined> {
+        const id = await vscode.window.showInputBox({
+            value: `parser_${index}`,
+            prompt: 'Parser id',
+            ignoreFocusOut: true,
+            validateInput: value => (value.trim() ? undefined : 'Parser id is required')
+        });
+        if (id === undefined) {
+            return undefined;
+        }
+
+        const pattern = await vscode.window.showInputBox({
+            prompt: 'Filename pattern (example: loss_{scenario}_{metric}_{epoch}.png or regex:^loss_(?<scenario>.+)\\.png$)',
+            ignoreFocusOut: true,
+            validateInput: value => (value.trim() ? undefined : 'Pattern is required')
+        });
+        if (pattern === undefined) {
+            return undefined;
+        }
+
+        let capturedFieldNames = extractCapturedFieldNamesFromPattern(pattern.trim());
+        if (capturedFieldNames.length === 0) {
+            const fieldListInput = await vscode.window.showInputBox({
+                prompt: 'Could not infer fields from pattern. Enter captured field names (comma-separated).',
+                ignoreFocusOut: true,
+                validateInput: value =>
+                    value
+                        .split(',')
+                        .map(item => item.trim())
+                        .filter(Boolean).length > 0
+                        ? undefined
+                        : 'At least one field name is required'
+            });
+            if (fieldListInput === undefined) {
+                return undefined;
+            }
+            capturedFieldNames = fieldListInput
+                .split(',')
+                .map(item => item.trim())
+                .filter(Boolean);
+        }
+
+        const fields: OutputFilenameParserField[] = [];
+        for (const fieldName of capturedFieldNames) {
+            const fieldType = await vscode.window.showQuickPick(
+                [
+                    { label: 'string', value: 'string' as const },
+                    { label: 'number', value: 'number' as const },
+                    { label: 'enum', value: 'enum' as const },
+                    { label: 'datetime', value: 'datetime' as const }
+                ],
+                { placeHolder: `Type for '${fieldName}'` }
+            );
+            if (!fieldType) {
+                return undefined;
+            }
+
+            let enumValues: string[] | undefined;
+            if (fieldType.value === 'enum') {
+                const enumInput = await vscode.window.showInputBox({
+                    prompt: `Enum values for '${fieldName}' (comma-separated)`,
+                    ignoreFocusOut: true,
+                    validateInput: value => (value.trim() ? undefined : 'At least one enum value is required')
+                });
+                if (enumInput === undefined) {
+                    return undefined;
+                }
+                enumValues = enumInput
+                    .split(',')
+                    .map(value => value.trim())
+                    .filter(Boolean);
+            }
+
+            fields.push({
+                name: fieldName,
+                type: fieldType.value,
+                enumValues
+            });
+        }
+
+        const appliesToInput = await vscode.window.showInputBox({
+            prompt: 'Optional applies-to rules (comma-separated, e.g. .png, */io/*). Leave empty for all files.',
+            ignoreFocusOut: true
+        });
+        if (appliesToInput === undefined) {
+            return undefined;
+        }
+
+        const appliesToKindPick = await vscode.window.showQuickPick(
+            [
+                { label: 'Files', value: 'files' as const },
+                { label: 'Folders', value: 'folders' as const },
+                { label: 'Files and Folders', value: 'both' as const }
+            ],
+            { placeHolder: 'Apply this parser to files, folders, or both?' }
+        );
+        if (!appliesToKindPick) {
+            return undefined;
+        }
+
+        const titleTemplateInput = await vscode.window.showInputBox({
+            prompt: 'Optional title template for analyzer (e.g. metric={metric}, id={id}). Use {fieldName} placeholders.',
+            ignoreFocusOut: true
+        });
+        if (titleTemplateInput === undefined) {
+            return undefined;
+        }
+
+        return {
+            id: id.trim(),
+            pattern: pattern.trim(),
+            fields,
+            appliesTo: appliesToInput
+                .split(',')
+                .map(value => value.trim())
+                .filter(Boolean),
+            appliesToKind: appliesToKindPick.value,
+            titleTemplate: titleTemplateInput.trim() || undefined
+        };
     }
 }
 
@@ -446,6 +630,16 @@ export function validateProfileStructure(profile: ProgramProfile): ProfileValida
         );
     }
 
+    const parserIds = profile.outputFilenameParsers.map(parser => parser.id.trim()).filter(Boolean);
+    const duplicateParserIds = findDuplicates(parserIds);
+    if (duplicateParserIds.length > 0) {
+        errors.push(`Duplicate filename parser ids: ${duplicateParserIds.join(', ')}.`);
+    }
+
+    for (const parser of profile.outputFilenameParsers) {
+        errors.push(...validateFilenameParser(parser));
+    }
+
     return { valid: errors.length === 0, errors };
 }
 
@@ -459,4 +653,34 @@ function sanitizeFolderName(value: string): string {
 
 function normalizeRelativeSegment(value: string): string {
     return value.trim().replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
+}
+
+function findDuplicates(values: string[]): string[] {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const value of values) {
+        if (seen.has(value)) {
+            duplicates.add(value);
+        } else {
+            seen.add(value);
+        }
+    }
+    return [...duplicates];
+}
+
+function extractCapturedFieldNamesFromPattern(pattern: string): string[] {
+    const names: string[] = [];
+
+    if (pattern.startsWith('regex:')) {
+        const raw = pattern.slice('regex:'.length);
+        for (const match of raw.matchAll(/\(\?<([a-zA-Z_][a-zA-Z0-9_]*)>/g)) {
+            names.push(match[1]);
+        }
+        return [...new Set(names)];
+    }
+
+    for (const match of pattern.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)) {
+        names.push(match[1]);
+    }
+    return [...new Set(names)];
 }

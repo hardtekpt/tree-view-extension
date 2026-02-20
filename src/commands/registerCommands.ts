@@ -162,6 +162,19 @@ export function registerCommands(
             await vscode.env.clipboard.writeText(uri.fsPath);
             void vscode.window.showInformationMessage(`Copied path: ${uri.fsPath}`);
         }),
+        vscode.commands.registerCommand(COMMANDS.revealFileSystemItemInExplorer, async (arg: MaybeNodeArg) => {
+            const uri = asUri(arg);
+            if (!uri) {
+                return;
+            }
+
+            try {
+                await vscode.commands.executeCommand('revealInExplorer', uri);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                void vscode.window.showErrorMessage(`Could not reveal item in Explorer: ${message}`);
+            }
+        }),
         vscode.commands.registerCommand(COMMANDS.toggleDev, (arg: MaybeUriArg) => {
             const uri = asUri(arg);
             if (uri) {

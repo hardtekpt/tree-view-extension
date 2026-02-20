@@ -88,6 +88,7 @@ export const COMMANDS = {
     pasteFileSystemItem: 'filesystem.paste',
     deleteFileSystemItem: 'filesystem.delete',
     copyFileSystemPath: 'filesystem.copyPath',
+    revealFileSystemItemInExplorer: 'filesystem.revealInExplorer',
     toggleDev: 'scenario.toggleDev',
     runScenario: 'scenario.run',
     runScenarioDebug: 'scenario.runDebug',

@@ -15,6 +15,7 @@ Each profile defines the structure for one Python program, including:
 - per-scenario config folder name
 - per-scenario output folder name
 - run command template
+- optional filename metadata parsers (template/regex based) to extract encoded plot/output parameters
 
 Profile files are stored in the extension global storage (persistent, outside your program folders).
 
@@ -101,11 +102,42 @@ Program Profile actions:
 - `Program Profiles: Rebind Current Workspace`
 - `Program Profiles: Validate Current`
 
+Filename metadata parser templates:
+
+- During profile create/edit, you can configure output filename parser templates.
+- Supported pattern styles:
+  - token template: `loss_{scenario}_{metric}_{epoch}.png`
+  - regex template: `regex:^loss_(?<scenario>.+)_(?<epoch>\\d+)\\.png$`
+- Supported field types: `string`, `number`, `enum`, `datetime`.
+- Parsed metadata is indexed and cached by the extension and exposed through scenario provider APIs for analyzer integration.
+
+How to add a filename template to the current profile:
+
+1. Open Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+2. Run `Program Profiles: Edit Current`.
+3. Continue through base profile prompts until `Filename metadata parser templates`.
+4. Choose:
+`Replace parser templates` to define a new set, or `Keep existing` to keep current templates.
+5. Add parser data:
+`Parser id`: example `plot_metric_parser`.
+`Pattern`: token style like `asmhdkafjh_{param}_{id}_{metric}_{name}.png`.
+6. Add fields for each placeholder:
+`param` -> `number` or `string`.
+`id` -> `number`.
+`metric` -> `string`.
+`name` -> `string`.
+7. Optionally set `appliesTo` rules (example: `.png`), or leave empty for all files.
+8. Choose `Done` to finish fields and parsers.
+9. Save profile and run `Program Profiles: Validate Current`.
+
+Regex example for compact filename tokens (e.g. `param02`, `id35`):
+
+- `regex:^asmhdkafjh_param(?<param>\\d+)_id(?<id>\\d+)_(?<metric>[^_]+)_(?<name>.+)\\.png$`
+
 Startup behavior:
 
 - On activation (and workspace-folder changes), the extension checks if the current workspace has a bound profile.
-- If no profile is bound, it tests a default structure guess.
-- If the structure does not match, it prompts you to create a custom profile or skip.
+- If no profile is bound, it prompts you to create a custom profile or skip.
 
 Quick keywords:
 

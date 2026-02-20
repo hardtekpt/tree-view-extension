@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { DEFAULTS } from './constants';
+import { OutputFilenameParser } from './profile/profileTypes';
 import { findPythonInBasePath } from './providers/scenario/runtimeUtils';
 import { getProfileManager } from './profile/profileManager';
 
@@ -44,6 +45,10 @@ export function getScenarioIoFolderName(): string {
 export function getScenarioRootFolder(): string {
     const value = getProfileManager()?.getActiveProfile()?.scenariosRoot;
     return sanitizeSegment(value, 'scenarios');
+}
+
+export function getOutputFilenameParsers(): OutputFilenameParser[] {
+    return getProfileManager()?.getActiveProfile()?.outputFilenameParsers ?? [];
 }
 
 function sanitizeFolderName(value: string | undefined, fallback: string): string {

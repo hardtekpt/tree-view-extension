@@ -68,6 +68,11 @@
     "icon": "$(link)"
    },
    {
+    "command": "filesystem.revealInExplorer",
+    "title": "Reveal in Explorer",
+    "icon": "$(folder-opened)"
+   },
+   {
     "command": "toolkit.copyTextValue",
     "title": "Copy Value",
     "icon": "$(copy)"
@@ -358,6 +363,11 @@
      "group": "run@9"
     },
     {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==scenarioExplorer && viewItem==scenario",
+     "group": "zz_reveal@1"
+    },
+    {
      "command": "run.openLog",
      "when": "view==scenarioExplorer && viewItem==ioRun",
      "group": "inline@3"
@@ -423,6 +433,11 @@
      "group": "tags@2"
     },
     {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==scenarioExplorer && viewItem==ioRun",
+     "group": "zz_reveal@1"
+    },
+    {
      "command": "run.filterByTag",
      "when": "view==scenarioExplorer && viewItem==ioFolder",
      "group": "inline"
@@ -458,9 +473,34 @@
      "group": "actions@1"
     },
     {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==scenarioExplorer && viewItem==ioFolder",
+     "group": "zz_reveal@1"
+    },
+    {
      "command": "filesystem.copyPath",
      "when": "view==scenarioExplorer && viewItem==configsFolder",
      "group": "actions@1"
+    },
+    {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==scenarioExplorer && viewItem==configsFolder",
+     "group": "zz_reveal@1"
+    },
+    {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==scenarioExplorer && viewItem==folder",
+     "group": "zz_reveal@1"
+    },
+    {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==scenarioExplorer && viewItem==file",
+     "group": "zz_reveal@1"
+    },
+    {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==scenarioExplorer && viewItem==status",
+     "group": "zz_reveal@1"
     },
     {
      "command": "filesystem.copy",
@@ -481,6 +521,11 @@
      "command": "filesystem.copyPath",
      "when": "view==srcExplorer && (viewItem==srcFile || viewItem==srcFolder)",
      "group": "actions@4"
+    },
+    {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==srcExplorer && (viewItem==srcFile || viewItem==srcFolder)",
+     "group": "zz_reveal@1"
     },
     {
      "command": "scenario.toggleDev",
@@ -521,6 +566,36 @@
      "command": "filesystem.copyPath",
      "when": "view==devArea && viewItem==devFile",
      "group": "actions@5"
+    },
+    {
+     "command": "filesystem.revealInExplorer",
+     "when": "view==devArea && viewItem==devFile",
+     "group": "zz_reveal@1"
+    },
+    {
+     "command": "profiles.create",
+     "when": "view==programInfo && viewItem==programInfoProfile",
+     "group": "profile@1"
+    },
+    {
+     "command": "profiles.editCurrent",
+     "when": "view==programInfo && viewItem==programInfoProfile",
+     "group": "profile@2"
+    },
+    {
+     "command": "profiles.rebindCurrentWorkspace",
+     "when": "view==programInfo && viewItem==programInfoProfile",
+     "group": "profile@3"
+    },
+    {
+     "command": "profiles.validateCurrent",
+     "when": "view==programInfo && viewItem==programInfoProfile",
+     "group": "profile@4"
+    },
+    {
+     "command": "profiles.openStorageFile",
+     "when": "view==programInfo && viewItem==programInfoProfile",
+     "group": "profile@5"
     }
    ],
    "commandPalette": [
