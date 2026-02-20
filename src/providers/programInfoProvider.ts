@@ -1,12 +1,14 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getBasePath, getPythonCommand } from '../config';
-import { COMMANDS, DEFAULTS } from '../constants';
+import { COMMANDS, DEFAULTS, STORAGE_KEYS } from '../constants';
 import { getProfileManager } from '../profile/profileManager';
+import { existsFile } from '../utils/fileSystem';
+import { getDefaultWorkspaceConfigPath } from '../workspace/workspaceFilePicker';
 import type { LastExecutionInfo, ScenarioProvider } from './scenarioProvider';
 import { findPythonInBasePath } from './scenario/runtimeUtils';
 
-type ProgramInfoSection = 'currentProfile' | 'currentProgram' | 'lastExecution';
+type ProgramInfoSection = 'currentProfile' | 'currentProgram' | 'currentWorkspaceConfig' | 'lastExecution';
 
 class ProgramInfoItem extends vscode.TreeItem {
     constructor(
@@ -23,7 +25,10 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
     readonly onDidChangeTreeData = this.emitter.event;
     private readonly disposables: vscode.Disposable[] = [];
 
-    constructor(private readonly scenarioProvider: ScenarioProvider) {
+    constructor(
+        private readonly scenarioProvider: ScenarioProvider,
+        private readonly workspaceState: vscode.Memento
+    ) {
         this.disposables.push(
             this.scenarioProvider.onDidChangeLastExecution(() => {
                 this.refresh();
@@ -49,6 +54,7 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
             return [
                 this.createSectionItem('Current Profile', 'currentProfile'),
                 this.createSectionItem('Current Program', 'currentProgram'),
+                this.createSectionItem('Current Workspace Config', 'currentWorkspaceConfig'),
                 this.createSectionItem('Last Execution', 'lastExecution')
             ];
         }
@@ -61,6 +67,10 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
             return this.getCurrentProgramItems();
         }
 
+        if (element.section === 'currentWorkspaceConfig') {
+            return this.getCurrentWorkspaceConfigItems();
+        }
+
         if (element.section === 'lastExecution') {
             return this.getLastExecutionItems();
         }
@@ -69,10 +79,16 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
     }
 
     private createSectionItem(label: string, section: ProgramInfoSection | 'currentProfile'): ProgramInfoItem {
-        const item = new ProgramInfoItem(label, vscode.TreeItemCollapsibleState.Expanded, section);
+        const item = new ProgramInfoItem(label, vscode.TreeItemCollapsibleState.Collapsed, section);
         item.contextValue = section === 'currentProfile' ? 'programInfoProfile' : 'programInfoSection';
         item.iconPath = new vscode.ThemeIcon(
-            section === 'currentProgram' ? 'settings-gear' : section === 'lastExecution' ? 'history' : 'account'
+            section === 'currentProgram'
+                ? 'settings-gear'
+                : section === 'currentWorkspaceConfig'
+                    ? 'json'
+                    : section === 'lastExecution'
+                        ? 'history'
+                        : 'account'
         );
         return item;
     }
@@ -113,7 +129,12 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         );
         structureItem.iconPath = new vscode.ThemeIcon('folder-opened');
         structureItem.contextValue = 'programInfoProfile';
-        structureItem.tooltip = `Scenarios root: ${profile.scenariosRoot}\nConfigs: ${profile.scenarioConfigsFolderName}\nOutputs: ${profile.scenarioIoFolderName}`;
+        structureItem.tooltip = `Scenarios root: ${profile.scenariosRoot}\nConfigs: ${profile.scenarioConfigsFolderName}\nOutputs: ${profile.scenarioIoFolderName}\nClick to open in profile storage`;
+        structureItem.command = {
+            command: COMMANDS.openCurrentProfileSection,
+            title: 'Open Structure in Profile Storage',
+            arguments: ['structure']
+        };
 
         const commandItem = new ProgramInfoItem(
             `Run template: ${profile.runCommandTemplate}`,
@@ -122,11 +143,11 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         commandItem.iconPath = new vscode.ThemeIcon('terminal-cmd');
         commandItem.contextValue = 'programInfoProfile';
         commandItem.command = {
-            command: COMMANDS.copyTextValue,
-            title: 'Copy Run Template',
-            arguments: [profile.runCommandTemplate]
+            command: COMMANDS.openCurrentProfileSection,
+            title: 'Open Run Template in Profile Storage',
+            arguments: ['runTemplate']
         };
-        commandItem.tooltip = `${profile.runCommandTemplate}\nClick to copy`;
+        commandItem.tooltip = `${profile.runCommandTemplate}\nClick to open in profile storage`;
 
         const parserCountItem = new ProgramInfoItem(
             `Filename parsers: ${profile.outputFilenameParsers.length}`,
@@ -134,6 +155,12 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         );
         parserCountItem.iconPath = new vscode.ThemeIcon('symbol-struct');
         parserCountItem.contextValue = 'programInfoProfile';
+        parserCountItem.command = {
+            command: COMMANDS.openCurrentProfileSection,
+            title: 'Open Filename Parsers in Profile Storage',
+            arguments: ['filenameParsers']
+        };
+        parserCountItem.tooltip = 'Click to open outputFilenameParsers in profile storage';
 
         const updatedItem = new ProgramInfoItem(
             `Updated: ${new Date(profile.updatedAtMs).toLocaleString()}`,
@@ -190,6 +217,65 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         envItem.tooltip = envLabel;
 
         return [baseItem, pythonItem, envItem];
+    }
+
+    private getCurrentWorkspaceConfigItems(): ProgramInfoItem[] {
+        const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const basePath = getBasePath();
+        const defaultWorkspaceConfigPath = basePath ? getDefaultWorkspaceConfigPath(basePath) : undefined;
+        const activeWorkspaceConfigPath = this.workspaceState.get<string>(STORAGE_KEYS.lastWorkspaceConfigPath);
+
+        const workspaceItem = new ProgramInfoItem(
+            `Workspace folder: ${workspacePath ?? 'Not available'}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        workspaceItem.iconPath = new vscode.ThemeIcon('root-folder');
+        if (workspacePath) {
+            workspaceItem.tooltip = `${workspacePath}\nClick to copy`;
+            workspaceItem.command = {
+                command: COMMANDS.copyTextValue,
+                title: 'Copy Workspace Folder Path',
+                arguments: [workspacePath]
+            };
+        }
+
+        const activeLabel = activeWorkspaceConfigPath ?? 'Not set';
+        const activeItem = new ProgramInfoItem(
+            `Active config: ${activeLabel}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        activeItem.iconPath = new vscode.ThemeIcon('file-code');
+        if (activeWorkspaceConfigPath) {
+            const exists = existsFile(activeWorkspaceConfigPath);
+            activeItem.description = exists ? 'exists' : 'missing';
+            activeItem.tooltip = `${activeWorkspaceConfigPath}\n${exists ? 'Exists on disk' : 'Missing on disk'}\nClick to copy`;
+            activeItem.command = {
+                command: COMMANDS.copyTextValue,
+                title: 'Copy Active Workspace Config Path',
+                arguments: [activeWorkspaceConfigPath]
+            };
+        } else {
+            activeItem.tooltip = 'No active workspace config path has been saved yet.';
+        }
+
+        const defaultLabel = defaultWorkspaceConfigPath ?? 'Not available';
+        const defaultItem = new ProgramInfoItem(
+            `Default config: ${defaultLabel}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        defaultItem.iconPath = new vscode.ThemeIcon('file');
+        if (defaultWorkspaceConfigPath) {
+            const exists = existsFile(defaultWorkspaceConfigPath);
+            defaultItem.description = exists ? 'exists' : 'missing';
+            defaultItem.tooltip = `${defaultWorkspaceConfigPath}\n${exists ? 'Exists on disk' : 'Missing on disk'}\nClick to copy`;
+            defaultItem.command = {
+                command: COMMANDS.copyTextValue,
+                title: 'Copy Default Workspace Config Path',
+                arguments: [defaultWorkspaceConfigPath]
+            };
+        }
+
+        return [workspaceItem, activeItem, defaultItem];
     }
 
     private getLastExecutionItems(): ProgramInfoItem[] {

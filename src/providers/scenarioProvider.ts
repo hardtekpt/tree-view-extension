@@ -835,14 +835,16 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const args = [...context.invocation.pythonArgs, ...context.extraFlags];
         const effectiveCommand = context.useSudo ? 'sudo' : context.python;
         const effectiveArgs = context.useSudo ? ['-n', context.python, ...args] : args;
-        this.output.appendLine(`[run] ${effectiveCommand} ${effectiveArgs.map(quoteIfNeeded).join(' ')}`);
+        const commandLine = [effectiveCommand, ...effectiveArgs].map(quoteIfNeeded).join(' ');
 
-        const child = this.spawnLoggedProcess(effectiveCommand, effectiveArgs, context.basePath);
-        if (!child) {
-            void vscode.window.showErrorMessage('Scenario run failed: could not start process.');
-            return;
-        }
-        this.watchProcessExit(child, '[exit]', 'Scenario process exited with code', context);
+        const terminal = vscode.window.createTerminal({
+            name: `Scenario Run: ${context.scenarioName}`,
+            cwd: context.basePath
+        });
+        terminal.show(true);
+        terminal.sendText(commandLine, true);
+
+        this.updateLastExecutionFromFilesystem();
     }
 
     // Run scenario with VS Code debugger using an ephemeral Python launch configuration.

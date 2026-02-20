@@ -2,7 +2,7 @@
  "name": "scenario-toolkit",
  "displayName": "Scenario Toolkit",
  "publisher": "francisco-santos",
- "version": "0.0.7",
+ "version": "0.0.8",
  "engines": {
   "vscode": "^1.85.0"
  },
@@ -76,6 +76,11 @@
     "command": "toolkit.copyTextValue",
     "title": "Copy Value",
     "icon": "$(copy)"
+   },
+   {
+    "command": "profiles.openCurrentProfileSection",
+    "title": "Program Profiles: Open Current Profile Section",
+    "icon": "$(go-to-file)"
    },
    {
     "command": "profiles.create",

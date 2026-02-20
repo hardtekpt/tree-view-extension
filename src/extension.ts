@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const devProvider = new DevProvider();
     const srcProvider = new SrcProvider();
     const scenarioProvider = new ScenarioProvider(context.workspaceState);
-    const programInfoProvider = new ProgramInfoProvider(scenarioProvider);
+    const programInfoProvider = new ProgramInfoProvider(scenarioProvider, context.workspaceState);
     const configInspectorProvider = new ConfigInspectorProvider(context);
     const srcExpanded = new Set<string>();
     const scenarioExpanded = new Set<string>();

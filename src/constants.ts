@@ -79,6 +79,7 @@ export const STORAGE_KEYS = {
 export const COMMANDS = {
     openFile: 'scenario.openFile',
     copyTextValue: 'toolkit.copyTextValue',
+    openCurrentProfileSection: 'profiles.openCurrentProfileSection',
     createProfile: 'profiles.create',
     editCurrentProfile: 'profiles.editCurrent',
     rebindCurrentWorkspace: 'profiles.rebindCurrentWorkspace',

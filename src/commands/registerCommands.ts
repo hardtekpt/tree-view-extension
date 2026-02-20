@@ -34,6 +34,59 @@ export function registerCommands(
             await vscode.env.clipboard.writeText(value);
             void vscode.window.showInformationMessage(`Copied: ${value}`);
         }),
+        vscode.commands.registerCommand(
+            COMMANDS.openCurrentProfileSection,
+            async (section?: 'runTemplate' | 'structure' | 'filenameParsers') => {
+                const activeProfile = profileManager.getActiveProfile();
+                if (!activeProfile) {
+                    void vscode.window.showWarningMessage('No active profile bound to this workspace.');
+                    return;
+                }
+
+                const profilesFileUri = profileManager.getProfilesFileUri();
+                try {
+                    await vscode.workspace.fs.createDirectory(profileManager.getStorageFolderUri());
+                    try {
+                        await vscode.workspace.fs.stat(profilesFileUri);
+                    } catch {
+                        await vscode.workspace.fs.writeFile(profilesFileUri, Buffer.from('{"version":1,"profiles":[]}\n', 'utf8'));
+                    }
+
+                    const document = await vscode.workspace.openTextDocument(profilesFileUri);
+                    const editor = await vscode.window.showTextDocument(document, { preview: false });
+                    const text = document.getText();
+
+                    const profileIdNeedle = `"id": "${activeProfile.id}"`;
+                    const profileIdIndex = text.indexOf(profileIdNeedle);
+                    if (profileIdIndex < 0) {
+                        return;
+                    }
+
+                    const fieldNeedles =
+                        section === 'runTemplate'
+                            ? ['"runCommandTemplate"']
+                            : section === 'filenameParsers'
+                                ? ['"outputFilenameParsers"']
+                                : ['"scenariosRoot"', '"scenarioConfigsFolderName"', '"scenarioIoFolderName"'];
+
+                    let fieldIndex = -1;
+                    for (const needle of fieldNeedles) {
+                        const index = text.indexOf(needle, profileIdIndex);
+                        if (index >= 0 && (fieldIndex < 0 || index < fieldIndex)) {
+                            fieldIndex = index;
+                        }
+                    }
+
+                    const targetIndex = fieldIndex >= 0 ? fieldIndex : profileIdIndex;
+                    const position = document.positionAt(targetIndex);
+                    editor.selection = new vscode.Selection(position, position);
+                    editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    void vscode.window.showErrorMessage(`Could not open profile section: ${message}`);
+                }
+            }
+        ),
         vscode.commands.registerCommand(COMMANDS.createProfile, async () => {
             await profileManager.createProfileForCurrentWorkspace();
             refreshToolkit();
