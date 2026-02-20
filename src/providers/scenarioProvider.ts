@@ -1,5 +1,4 @@
 import * as fs from 'fs';
-import * as net from 'net';
 import * as path from 'path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as vscode from 'vscode';
@@ -34,6 +33,8 @@ type DebugRunTarget =
     | { kind: 'program'; program: string; args: string[] }
     | { kind: 'module'; module: string; args: string[] };
 
+const TERMINAL_COMMAND_DELAY_MS = 300;
+
 interface ScenarioRunInvocation {
     pythonArgs: string[];
     debugTarget: DebugRunTarget;
@@ -47,6 +48,8 @@ interface ScenarioRunContext {
     extraFlags: string[];
     useSudo: boolean;
 }
+
+const SCENARIO_TOOLKIT_DEBUG_ID = 'scenario-toolkit';
 
 export interface LastExecutionInfo {
     scenarioName: string;
@@ -827,14 +830,14 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     // Run scenario immediately in the local process.
     async run(uri: vscode.Uri): Promise<void> {
-        const context = await this.buildScenarioRunContext(uri);
+        const context = await this.buildScenarioRunContext(uri, false);
         if (!context) {
             return;
         }
 
         const args = [...context.invocation.pythonArgs, ...context.extraFlags];
         const effectiveCommand = context.useSudo ? 'sudo' : context.python;
-        const effectiveArgs = context.useSudo ? ['-n', context.python, ...args] : args;
+        const effectiveArgs = context.useSudo ? [context.python, ...args] : args;
         const commandLine = [effectiveCommand, ...effectiveArgs].map(quoteIfNeeded).join(' ');
 
         const terminal = vscode.window.createTerminal({
@@ -842,87 +845,43 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             cwd: context.basePath
         });
         terminal.show(true);
+        await delayMs(TERMINAL_COMMAND_DELAY_MS);
         terminal.sendText(commandLine, true);
 
         this.updateLastExecutionFromFilesystem();
     }
 
-    // Run scenario with VS Code debugger using an ephemeral Python launch configuration.
+    // Run scenario via a launch.json configuration (create/update per scenario first).
     async runWithDebugger(uri: vscode.Uri): Promise<void> {
-        const context = await this.buildScenarioRunContext(uri);
+        const context = await this.buildScenarioRunContext(uri, false);
         if (!context) {
+            return;
+        }
+        const configured = await this.ensureScenarioDebugLaunchConfiguration(context);
+        if (!configured) {
             return;
         }
 
         if (context.useSudo) {
-            const debugpyReady = await this.ensureDebugpyAvailable(context.python, context.basePath);
-            if (!debugpyReady) {
-                return;
-            }
+            this.output.appendLine(`[run-debug] sudo enabled for scenario '${context.scenarioName}'.`);
+        }
 
-            const port = await this.allocateDebugPort();
-            const debugArgs = [
-                '-m',
-                'debugpy',
-                '--listen',
-                `127.0.0.1:${port}`,
-                '--wait-for-client',
-                ...context.invocation.pythonArgs,
-                ...context.extraFlags
-            ];
-            this.output.appendLine(
-                `[run-debug-sudo] sudo -n ${[context.python, ...debugArgs].map(quoteIfNeeded).join(' ')}`
+        const started = await vscode.debug.startDebugging(
+            configured.workspaceFolder,
+            configured.configurationName
+        );
+        if (!started) {
+            // Fallback to the resolved configuration object in case launch-by-name cannot resolve immediately.
+            const fallbackStarted = await vscode.debug.startDebugging(
+                configured.workspaceFolder,
+                configured.debugConfiguration
             );
-
-            const child = this.spawnLoggedProcess('sudo', ['-n', context.python, ...debugArgs], context.basePath);
-            if (!child) {
-                void vscode.window.showErrorMessage('Scenario debug run failed: could not start process.');
-                return;
-            }
-            this.watchProcessExit(child, '[debug-sudo-exit]', 'Scenario debug process exited with code', context);
-
-            const ready = await this.waitForDebugServer(port, 10000);
-            if (!ready) {
-                child.kill();
-                void vscode.window.showErrorMessage('Timed out waiting for sudo debug server to start.');
-                return;
-            }
-
-            const started = await vscode.debug.startDebugging(undefined, {
-                type: 'python',
-                request: 'attach',
-                name: `Run Scenario (sudo): ${context.scenarioName}`,
-                connect: { host: '127.0.0.1', port },
-                pathMappings: [{ localRoot: context.basePath, remoteRoot: context.basePath }],
-                justMyCode: false
-            });
-            if (!started) {
-                child.kill();
-                void vscode.window.showErrorMessage('Could not attach debugger for this sudo scenario run.');
+            if (!fallbackStarted) {
+                void vscode.window.showErrorMessage(
+                    `Could not start debugger for scenario '${context.scenarioName}' from launch.json.`
+                );
             }
             return;
-        }
-
-        const debugConfiguration: vscode.DebugConfiguration = {
-            type: 'python',
-            request: 'launch',
-            name: `Run Scenario: ${context.scenarioName}`,
-            cwd: context.basePath,
-            python: context.python,
-            console: 'integratedTerminal',
-            justMyCode: false
-        };
-        if (context.invocation.debugTarget.kind === 'program') {
-            debugConfiguration.program = context.invocation.debugTarget.program;
-            debugConfiguration.args = [...context.invocation.debugTarget.args, ...context.extraFlags];
-        } else {
-            debugConfiguration.module = context.invocation.debugTarget.module;
-            debugConfiguration.args = [...context.invocation.debugTarget.args, ...context.extraFlags];
-        }
-
-        const started = await vscode.debug.startDebugging(undefined, debugConfiguration);
-        if (!started) {
-            void vscode.window.showErrorMessage('Could not start debugger for this scenario.');
         }
     }
 
@@ -950,7 +909,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             void vscode.window.showErrorMessage('Failed to start detached screen session: could not start process.');
             return;
         }
-        child.on('close', code => {
+        child.on('close', (code: number | null) => {
             this.output.appendLine(`[run-screen-exit] code=${code ?? 'unknown'}`);
             this.output.show(true);
             this.updateLastExecutionFromFilesystem();
@@ -967,7 +926,10 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         });
     }
 
-    private async buildScenarioRunContext(uri: vscode.Uri): Promise<ScenarioRunContext | undefined> {
+    private async buildScenarioRunContext(
+        uri: vscode.Uri,
+        requireAuthenticatedSudo = true
+    ): Promise<ScenarioRunContext | undefined> {
         const basePath = getBasePath();
         if (!basePath || !existsDir(basePath)) {
             void vscode.window.showWarningMessage('No active program profile for this workspace. Create or bind a profile first.');
@@ -981,7 +943,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return undefined;
         }
 
-        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath);
+        const useSudo = await this.resolveSudoUsage(basePath, uri.fsPath, requireAuthenticatedSudo);
         if (useSudo === undefined) {
             return undefined;
         }
@@ -996,7 +958,11 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         };
     }
 
-    private async resolveSudoUsage(basePath: string, scenarioPath: string): Promise<boolean | undefined> {
+    private async resolveSudoUsage(
+        basePath: string,
+        scenarioPath: string,
+        requireAuthenticatedSudo: boolean
+    ): Promise<boolean | undefined> {
         if (!this.isSudoEnabledForScenario(scenarioPath)) {
             return false;
         }
@@ -1009,6 +975,10 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             );
             void vscode.window.showWarningMessage('Sudo is not available on Windows.');
             return false;
+        }
+
+        if (!requireAuthenticatedSudo) {
+            return true;
         }
 
         const authenticated = await this.ensureSudoSession(basePath);
@@ -1052,47 +1022,6 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             child.stdin.end();
             child.on('error', () => resolve(false));
             child.on('close', code => resolve(code === 0));
-        });
-    }
-
-    private allocateDebugPort(): Promise<number> {
-        return new Promise((resolve, reject) => {
-            const server = net.createServer();
-            server.listen(0, '127.0.0.1', () => {
-                const address = server.address();
-                if (!address || typeof address === 'string') {
-                    server.close();
-                    reject(new Error('Could not allocate debug port.'));
-                    return;
-                }
-                const port = address.port;
-                server.close(error => (error ? reject(error) : resolve(port)));
-            });
-            server.on('error', reject);
-        });
-    }
-
-    private waitForDebugServer(port: number, timeoutMs: number): Promise<boolean> {
-        const start = Date.now();
-
-        return new Promise(resolve => {
-            const tryConnect = (): void => {
-                const socket = net.connect({ host: '127.0.0.1', port }, () => {
-                    socket.end();
-                    resolve(true);
-                });
-
-                socket.on('error', () => {
-                    socket.destroy();
-                    if (Date.now() - start >= timeoutMs) {
-                        resolve(false);
-                        return;
-                    }
-                    setTimeout(tryConnect, 150);
-                });
-            };
-
-            tryConnect();
         });
     }
 
@@ -1140,55 +1069,6 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         };
     }
 
-    private async ensureDebugpyAvailable(pythonPath: string, basePath: string): Promise<boolean> {
-        const hasDebugpy = await this.pythonCanImportModule(pythonPath, 'debugpy', basePath);
-        if (hasDebugpy) {
-            return true;
-        }
-
-        const choice = await vscode.window.showWarningMessage(
-            `The selected Python environment is missing 'debugpy'. Install it now for sudo debugging?`,
-            'Install',
-            'Cancel'
-        );
-        if (choice !== 'Install') {
-            return false;
-        }
-
-        const installed = await this.installDebugpy(pythonPath, basePath);
-        if (!installed) {
-            void vscode.window.showErrorMessage(`Could not install debugpy in '${pythonPath}'.`);
-            return false;
-        }
-
-        const nowAvailable = await this.pythonCanImportModule(pythonPath, 'debugpy', basePath);
-        if (!nowAvailable) {
-            void vscode.window.showErrorMessage(`debugpy still not available in '${pythonPath}' after install.`);
-            return false;
-        }
-
-        return true;
-    }
-
-    private pythonCanImportModule(pythonPath: string, moduleName: string, basePath: string): Promise<boolean> {
-        return new Promise(resolve => {
-            const child = spawn(pythonPath, ['-c', `import ${moduleName}`], { cwd: basePath });
-            child.on('error', () => resolve(false));
-            child.on('close', code => resolve(code === 0));
-        });
-    }
-
-    private installDebugpy(pythonPath: string, basePath: string): Promise<boolean> {
-        this.output.appendLine(`[debugpy-install] ${pythonPath} -m pip install debugpy`);
-        return new Promise(resolve => {
-            const child = spawn(pythonPath, ['-m', 'pip', 'install', 'debugpy'], { cwd: basePath });
-            child.stdout.on('data', chunk => this.output.append(String(chunk)));
-            child.stderr.on('data', chunk => this.output.append(String(chunk)));
-            child.on('error', () => resolve(false));
-            child.on('close', code => resolve(code === 0));
-        });
-    }
-
     private spawnLoggedProcess(
         command: string,
         args: string[],
@@ -1209,22 +1089,67 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         }
     }
 
-    private watchProcessExit(
-        child: ChildProcessWithoutNullStreams,
-        logPrefix: string,
-        nonZeroWarningPrefix: string,
-        context?: ScenarioRunContext
-    ): void {
-        child.on('close', code => {
-            this.output.appendLine(`${logPrefix} code=${code ?? 'unknown'}`);
-            this.output.show(true);
-            if (context) {
-                this.updateLastExecutionFromFilesystem();
-            }
-            if (code !== 0) {
-                void vscode.window.showWarningMessage(`${nonZeroWarningPrefix} ${code ?? 'unknown'}.`);
-            }
+    private async ensureScenarioDebugLaunchConfiguration(
+        context: ScenarioRunContext
+    ): Promise<
+        { workspaceFolder: vscode.WorkspaceFolder; configurationName: string; debugConfiguration: vscode.DebugConfiguration } | undefined
+    > {
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(context.basePath));
+        if (!workspaceFolder) {
+            void vscode.window.showWarningMessage(
+                'Could not determine workspace folder for this scenario. Open the program folder in VS Code first.'
+            );
+            return undefined;
+        }
+
+        const configurationName = `Scenario Toolkit: ${context.scenarioName}`;
+        const launchConfig = vscode.workspace.getConfiguration('launch', workspaceFolder.uri);
+        const existing = launchConfig.get<vscode.DebugConfiguration[]>('configurations', []);
+        const desired = this.buildScenarioDebugLaunchConfiguration(context, configurationName);
+
+        const index = existing.findIndex(configuration => {
+            const byId = configuration['scenarioToolkitId'] === SCENARIO_TOOLKIT_DEBUG_ID;
+            const byScenario = configuration['scenarioToolkitScenario'] === context.scenarioName;
+            return (byId && byScenario) || configuration.name === configurationName;
         });
+
+        const nextConfigurations = [...existing];
+        if (index >= 0) {
+            nextConfigurations[index] = desired;
+        } else {
+            nextConfigurations.push(desired);
+        }
+
+        await launchConfig.update('configurations', nextConfigurations, vscode.ConfigurationTarget.WorkspaceFolder);
+        return { workspaceFolder, configurationName, debugConfiguration: desired };
+    }
+
+    private buildScenarioDebugLaunchConfiguration(
+        context: ScenarioRunContext,
+        configurationName: string
+    ): vscode.DebugConfiguration {
+        const args = [...context.invocation.debugTarget.args, ...context.extraFlags];
+        const configuration: vscode.DebugConfiguration = {
+            type: 'debugpy',
+            request: 'launch',
+            name: configurationName,
+            cwd: context.basePath,
+            python: context.python,
+            console: 'integratedTerminal',
+            justMyCode: false,
+            sudo: context.useSudo,
+            scenarioToolkitId: SCENARIO_TOOLKIT_DEBUG_ID,
+            scenarioToolkitScenario: context.scenarioName,
+            scenarioToolkitSudo: context.useSudo
+        };
+
+        if (context.invocation.debugTarget.kind === 'program') {
+            configuration.program = context.invocation.debugTarget.program;
+        } else {
+            configuration.module = context.invocation.debugTarget.module;
+        }
+        configuration.args = args;
+        return configuration;
     }
 
     private updateLastExecutionFromFilesystem(): void {
@@ -1713,15 +1638,15 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
 
-        node.tooltip = [
-            `Scenario: ${scenarioName}`,
-            `Sudo: ${sudoEnabled ? 'Enabled' : 'Disabled'}`,
-            `Run flags: ${runFlags}`,
-            `Scenario filter: ${scenarioFilter}`,
-            `Scenario sort: ${this.formatSortMode(this.scenarioSortMode)}`,
-            `Run sort: ${this.formatSortMode(runSortMode)}`,
-            `Run tag filter: ${activeRunTagFilter}`
-        ].join('\n');
+        node.tooltip = this.buildTooltipTable('Scenario Details', [
+            ['Scenario', scenarioName],
+            ['Sudo', sudoEnabled ? 'Enabled' : 'Disabled'],
+            ['Run flags', runFlags],
+            ['Scenario filter', scenarioFilter],
+            ['Scenario sort', this.formatSortMode(this.scenarioSortMode)],
+            ['Run sort', this.formatSortMode(runSortMode)],
+            ['Run tag filter', activeRunTagFilter]
+        ]);
     }
 
     private applyIoFolderHover(node: ScenarioNode): void {
@@ -1731,14 +1656,14 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
 
-        node.tooltip = [
-            `Scenario: ${scenarioName}`,
-            `Folder: ${getScenarioIoFolderName()}`,
-            `Run sort: ${this.formatSortMode(runSortMode)}`,
-            `Run tag filter: ${activeRunTagFilter}`,
-            `Sudo: ${this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'}`,
-            `Run flags: ${runFlags}`
-        ].join('\n');
+        node.tooltip = this.buildTooltipTable('Output Folder Details', [
+            ['Scenario', scenarioName],
+            ['Folder', getScenarioIoFolderName()],
+            ['Run sort', this.formatSortMode(runSortMode)],
+            ['Run tag filter', activeRunTagFilter],
+            ['Sudo', this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'],
+            ['Run flags', runFlags]
+        ]);
     }
 
     private applyIoRunDetails(node: ScenarioNode, scenarioPath: string): void {
@@ -1755,16 +1680,36 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
         const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'recent';
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
-        node.tooltip = [
-            `Run: ${runName}`,
-            `Scenario: ${scenarioName}`,
-            `Tags: ${tags.length > 0 ? tags.map(tag => tag.label).join(', ') : 'None'}`,
-            `Active run tag filter: ${this.formatTagFilterForScenario(scenarioPath)}`,
-            `Sudo: ${this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'}`,
-            `Run flags: ${runFlags}`,
-            `Run sort: ${this.formatSortMode(runSortMode)}`,
-            `Scenario filter: ${this.filter ? this.filter : 'None'}`
-        ].join('\n');
+        node.tooltip = this.buildTooltipTable('Output Run Details', [
+            ['Run', runName],
+            ['Scenario', scenarioName],
+            ['Tags', tags.length > 0 ? tags.map(tag => tag.label).join(', ') : 'None'],
+            ['Active run tag filter', this.formatTagFilterForScenario(scenarioPath)],
+            ['Sudo', this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'],
+            ['Run flags', runFlags],
+            ['Run sort', this.formatSortMode(runSortMode)],
+            ['Scenario filter', this.filter ? this.filter : 'None']
+        ]);
+    }
+
+    private buildTooltipTable(title: string, rows: ReadonlyArray<readonly [string, string]>): vscode.MarkdownString {
+        const body = rows
+            .map(([field, value]) => `| ${this.escapeMarkdownTableCell(field)} | ${this.escapeMarkdownTableCell(value)} |`)
+            .join('\n');
+        const markdown = new vscode.MarkdownString(
+            `### ${this.escapeMarkdownHeading(title)}\n\n| Field | Value |\n| --- | --- |\n${body}`,
+            true
+        );
+        markdown.isTrusted = false;
+        return markdown;
+    }
+
+    private escapeMarkdownHeading(value: string): string {
+        return value.replace(/\r?\n/g, ' ').trim();
+    }
+
+    private escapeMarkdownTableCell(value: string): string {
+        return value.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
     }
 
     private formatTagFilterForScenario(scenarioPath: string): string {
@@ -1901,4 +1846,8 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             (existsDir(uri.fsPath) && toPathKey(path.dirname(uri.fsPath)) === toPathKey(scenariosRoot) ? uri.fsPath : undefined)
         );
     }
+}
+
+function delayMs(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }

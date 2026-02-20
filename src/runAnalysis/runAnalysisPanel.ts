@@ -256,7 +256,13 @@ function buildHtml(
     figure.plot-card { margin: 0; border: 1px solid var(--vscode-editorWidget-border); border-radius: 6px; overflow: hidden; background: var(--vscode-editor-background); }
     img { width: 100%; display: block; background: #fff; }
     figcaption { padding: 6px 8px; font-size: 12px; border-top: 1px solid var(--vscode-editorWidget-border); word-break: break-word; }
-    .caption-title { margin-bottom: 6px; }
+    .caption-title {
+      margin-bottom: 6px;
+      font-size: 14px;
+      font-weight: 700;
+      text-align: center;
+      line-height: 1.3;
+    }
     .badges { display: flex; flex-wrap: wrap; gap: 4px; }
     .badge { font-size: 11px; border: 1px solid var(--vscode-editorWidget-border); border-radius: 999px; padding: 1px 6px; opacity: .95; }
     .badge strong { opacity: .85; font-weight: 600; }
