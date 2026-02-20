@@ -31,20 +31,20 @@ export async function getInitialWorkspaceUri(): Promise<vscode.Uri | undefined> 
 }
 
 // Show a save dialog for workspace snapshots.
-export async function pickWorkspaceToSave(): Promise<vscode.Uri | undefined> {
-    const defaultUri = await getInitialWorkspaceUri();
+export async function pickWorkspaceToSave(defaultUri?: vscode.Uri): Promise<vscode.Uri | undefined> {
+    const fallbackUri = defaultUri ?? (await getInitialWorkspaceUri());
     return vscode.window.showSaveDialog({
-        defaultUri,
+        defaultUri: fallbackUri,
         filters: { 'Workspace Config': ['json'] },
         saveLabel: 'Save Workspace Config'
     });
 }
 
 // Show an open dialog for workspace snapshots.
-export async function pickWorkspaceToLoad(): Promise<vscode.Uri | undefined> {
-    const defaultUri = await getInitialWorkspaceUri();
+export async function pickWorkspaceToLoad(defaultUri?: vscode.Uri): Promise<vscode.Uri | undefined> {
+    const fallbackUri = defaultUri ?? (await getInitialWorkspaceUri());
     const picked = await vscode.window.showOpenDialog({
-        defaultUri: defaultUri ? vscode.Uri.file(path.dirname(defaultUri.fsPath)) : undefined,
+        defaultUri: fallbackUri ? vscode.Uri.file(path.dirname(fallbackUri.fsPath)) : undefined,
         canSelectFiles: true,
         canSelectFolders: false,
         canSelectMany: false,

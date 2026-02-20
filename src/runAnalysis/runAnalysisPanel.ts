@@ -168,6 +168,31 @@ function buildHtml(
       font-weight: 500;
     }
     button.ghost:hover { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
+    button.icon-btn {
+      width: 30px;
+      min-width: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    button.icon-btn svg {
+      width: 14px;
+      height: 14px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+    button.icon-btn .state-off { display: none; }
+    button.icon-btn.is-off .state-on { display: none; }
+    button.icon-btn.is-off .state-off { display: inline; }
+    button.icon-btn .collapsed-state { display: inline; }
+    button.icon-btn .expanded-state { display: none; }
+    button.icon-btn.is-expanded .collapsed-state { display: none; }
+    button.icon-btn.is-expanded .expanded-state { display: inline; }
     select:focus,
     input[type="text"]:focus {
       border-color: var(--vscode-focusBorder);
@@ -191,27 +216,40 @@ function buildHtml(
     .active-filter {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      width: fit-content;
+      gap: 6px;
+      flex-wrap: wrap;
       border: 1px solid var(--vscode-editorWidget-border);
-      border-radius: 999px;
-      padding: 3px 8px;
+      border-radius: 6px;
+      padding: 4px 6px;
       font-size: 12px;
     }
+    .active-filter .field { white-space: nowrap; opacity: .9; }
+    .active-filter .values { display: inline-flex; gap: 4px; flex-wrap: nowrap; align-items: center; }
     .active-filter button {
+      white-space: nowrap;
+    }
+    .value-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid var(--vscode-editorWidget-border);
+      border-radius: 999px;
+      padding: 1px 6px;
+      white-space: nowrap;
+      background: var(--vscode-editor-background);
+    }
+    .value-chip button {
       border: none;
       background: transparent;
       color: var(--vscode-errorForeground);
       cursor: pointer;
       padding: 0;
       line-height: 1;
-      font-size: 13px;
+      min-height: auto;
+      width: auto;
+      min-width: auto;
     }
-    .active-filter button.edit {
-      color: var(--vscode-textLink-foreground);
-      font-size: 11px;
-    }
-    .active-filter button:hover { text-decoration: underline; }
+    .value-chip button:hover { text-decoration: underline; }
     details.tree-folder { margin: 8px 0; border-left: 2px solid var(--vscode-editorWidget-border); padding-left: 10px; }
     details.tree-folder > summary { cursor: pointer; font-weight: 600; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--plot-card-width), 1fr)); gap: 12px; margin-top: 8px; }
@@ -278,8 +316,33 @@ function buildHtml(
       <label for="imageSize">Image size</label>
       <input id="imageSize" type="range" min="140" max="520" step="10" value="240" />
       <span id="imageSizeValue" class="value">240px</span>
-      <button id="toggleBadges" type="button" class="ghost">Show badges</button>
-      <button id="clearFilters" type="button" class="ghost">Clear filters</button>
+      <button id="toggleBadges" type="button" class="ghost icon-btn" aria-label="Show badges" title="Show badges">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7v4.5a2 2 0 0 0 .6 1.4l5.5 5.5a2 2 0 0 0 2.8 0l5.5-5.5a2 2 0 0 0 .6-1.4V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2Z"></path>
+          <circle cx="8.5" cy="8.5" r="1.2"></circle>
+          <path class="state-off" d="M5 19L19 5"></path>
+        </svg>
+      </button>
+      <button id="toggleFolders" type="button" class="ghost icon-btn" aria-label="Expand folders" title="Expand folders">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g class="collapsed-state">
+            <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11Z"></path>
+            <path d="M12 10v6"></path>
+            <path d="M9 13h6"></path>
+          </g>
+          <g class="expanded-state">
+            <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-10Z"></path>
+            <path d="M8 13h8"></path>
+          </g>
+        </svg>
+      </button>
+      <button id="clearFilters" type="button" class="ghost icon-btn" aria-label="Clear filters" title="Clear filters">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5h16"></path>
+          <path d="M7 5l2.5 8v4a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-4L17 5"></path>
+          <path d="M4 20L20 4"></path>
+        </svg>
+      </button>
     </div>
     <div class="filter-section-title">Filter by parameter combinations</div>
     <div id="filterBuilder" class="filter-builder">
@@ -287,7 +350,9 @@ function buildHtml(
         <select id="filterFieldSelect"></select>
         <span class="eq">=</span>
         <select id="filterValueSelect"></select>
-        <button id="addFilter" type="button">Add filter</button>
+        <button id="addFilter" type="button" class="icon-btn" aria-label="Add filter value" title="Add filter value">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+        </button>
       </div>
       <div id="activeFilters" class="active-filters"></div>
     </div>
@@ -305,6 +370,7 @@ function buildHtml(
     const slider = document.getElementById('imageSize');
     const valueLabel = document.getElementById('imageSizeValue');
     const toggleBadges = document.getElementById('toggleBadges');
+    const toggleFolders = document.getElementById('toggleFolders');
     const clearFilters = document.getElementById('clearFilters');
     const filterBuilder = document.getElementById('filterBuilder');
     const filterFieldSelect = document.getElementById('filterFieldSelect');
@@ -315,8 +381,9 @@ function buildHtml(
 
     const figures = Array.from(document.querySelectorAll('figure.plot-card'));
     const folderDetails = Array.from(document.querySelectorAll('details.tree-folder'));
-    const activeRules = [];
+    const activeRules = new Map();
     let badgesVisible = false;
+    let foldersExpanded = false;
 
     const readFigureMetadata = figure => {
       const raw = figure.dataset.meta;
@@ -340,13 +407,32 @@ function buildHtml(
 
     const setBadgeVisibility = () => {
       document.body.classList.toggle('hide-badges', !badgesVisible);
-      toggleBadges.textContent = badgesVisible ? 'Hide badges' : 'Show badges';
+      const nextLabel = badgesVisible ? 'Hide badges' : 'Show badges';
+      toggleBadges.setAttribute('aria-label', nextLabel);
+      toggleBadges.setAttribute('title', nextLabel);
+      toggleBadges.classList.toggle('is-off', !badgesVisible);
     };
     toggleBadges.addEventListener('click', () => {
       badgesVisible = !badgesVisible;
       setBadgeVisibility();
     });
     setBadgeVisibility();
+
+    const setFolderExpansion = () => {
+      for (const detail of folderDetails) {
+        detail.open = foldersExpanded;
+      }
+      const nextLabel = foldersExpanded ? 'Collapse folders' : 'Expand folders';
+      toggleFolders.setAttribute('aria-label', nextLabel);
+      toggleFolders.setAttribute('title', nextLabel);
+      toggleFolders.classList.toggle('is-expanded', foldersExpanded);
+      toggleFolders.disabled = folderDetails.length === 0;
+    };
+    toggleFolders.addEventListener('click', () => {
+      foldersExpanded = !foldersExpanded;
+      setFolderExpansion();
+    });
+    setFolderExpansion();
 
     const collectFilterOptions = () => {
       const optionsByField = new Map();
@@ -393,46 +479,56 @@ function buildHtml(
 
     const renderActiveRules = () => {
       activeFilters.innerHTML = '';
-      if (activeRules.length === 0) {
+      const entries = Array.from(activeRules.entries()).sort((a, b) =>
+        a[0].localeCompare(b[0], undefined, { sensitivity: 'base' })
+      );
+      if (entries.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
         empty.textContent = 'No filters applied.';
         activeFilters.appendChild(empty);
         return;
       }
-      activeRules.forEach((rule, index) => {
-        const chip = document.createElement('div');
-        chip.className = 'active-filter';
-        chip.textContent = rule.field + ' = ' + rule.value;
+      for (const [field, values] of entries) {
+        const row = document.createElement('div');
+        row.className = 'active-filter';
 
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.title = 'Remove filter';
-        remove.setAttribute('aria-label', 'Remove filter');
-        remove.textContent = 'x';
-        remove.addEventListener('click', () => {
-          activeRules.splice(index, 1);
-          renderActiveRules();
-          applyFilters();
-        });
-        const edit = document.createElement('button');
-        edit.type = 'button';
-        edit.className = 'edit';
-        edit.title = 'Edit filter';
-        edit.setAttribute('aria-label', 'Edit filter');
-        edit.textContent = 'edit';
-        edit.addEventListener('click', () => {
-          filterFieldSelect.value = rule.field;
-          renderValueOptions(rule.field);
-          filterValueSelect.value = rule.value;
-          activeRules.splice(index, 1);
-          renderActiveRules();
-          applyFilters();
-        });
-        chip.appendChild(edit);
-        chip.appendChild(remove);
-        activeFilters.appendChild(chip);
-      });
+        const fieldLabel = document.createElement('span');
+        fieldLabel.className = 'field';
+        fieldLabel.textContent = field + ' =';
+        row.appendChild(fieldLabel);
+
+        const valuesContainer = document.createElement('div');
+        valuesContainer.className = 'values';
+        const sortedValues = Array.from(values).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+        for (const value of sortedValues) {
+          const valueChip = document.createElement('span');
+          valueChip.className = 'value-chip';
+          valueChip.textContent = value;
+
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.title = 'Remove value';
+          remove.setAttribute('aria-label', 'Remove value');
+          remove.textContent = 'x';
+          remove.addEventListener('click', () => {
+            const valuesForField = activeRules.get(field);
+            if (!valuesForField) {
+              return;
+            }
+            valuesForField.delete(value);
+            if (valuesForField.size === 0) {
+              activeRules.delete(field);
+            }
+            renderActiveRules();
+            applyFilters();
+          });
+          valueChip.appendChild(remove);
+          valuesContainer.appendChild(valueChip);
+        }
+        row.appendChild(valuesContainer);
+        activeFilters.appendChild(row);
+      }
     };
 
     const buildFilterUi = () => {
@@ -454,9 +550,13 @@ function buildHtml(
         if (!field || !value) {
           return;
         }
-        const exists = activeRules.some(rule => rule.field === field && rule.value === value);
-        if (!exists) {
-          activeRules.push({ field, value });
+        let valuesForField = activeRules.get(field);
+        if (!valuesForField) {
+          valuesForField = new Set();
+          activeRules.set(field, valuesForField);
+        }
+        valuesForField.add(value);
+        if (valuesForField.size > 0) {
           renderActiveRules();
           applyFilters();
         }
@@ -464,12 +564,12 @@ function buildHtml(
     };
 
     const matchesSelections = metadata => {
-      if (activeRules.length === 0) {
+      if (activeRules.size === 0) {
         return true;
       }
-      for (const rule of activeRules) {
-        const value = metadata[rule.field];
-        if (value === undefined || String(value) !== rule.value) {
+      for (const [field, values] of activeRules.entries()) {
+        const value = metadata[field];
+        if (value === undefined || !values.has(String(value))) {
           return false;
         }
       }
@@ -502,7 +602,7 @@ function buildHtml(
     };
 
     clearFilters.addEventListener('click', () => {
-      activeRules.length = 0;
+      activeRules.clear();
       renderActiveRules();
       applyFilters();
     });

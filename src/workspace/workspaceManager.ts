@@ -6,7 +6,7 @@ import { STORAGE_KEYS } from '../constants';
 import { DevProvider } from '../providers/devProvider';
 import { ScenarioProvider } from '../providers/scenarioProvider';
 import { ScenarioWorkspaceState } from '../providers/scenario/types';
-import { TreeViewWorkspaceState } from './treeViewState';
+import { ComponentViewWorkspaceState, TreeViewWorkspaceState } from './treeViewState';
 import {
     getDefaultWorkspaceConfigPath,
     pickWorkspaceToLoad,
@@ -21,7 +21,17 @@ export interface ToolkitWorkspaceConfig {
     treeViews: TreeViewWorkspaceState;
 }
 
+const DEFAULT_COMPONENT_VIEWS: ComponentViewWorkspaceState = {
+    devAreaVisible: true,
+    srcExplorerVisible: true,
+    scenarioExplorerVisible: true,
+    programInfoVisible: true,
+    configInspectorVisible: false
+};
+
 export class WorkspaceManager {
+    private activeWorkspaceConfigPath?: string;
+
     constructor(
         private readonly state: vscode.Memento,
         private readonly devProvider: DevProvider,
@@ -30,63 +40,56 @@ export class WorkspaceManager {
         private readonly applyTreeViewState: (state: TreeViewWorkspaceState) => Promise<void>
     ) {}
 
-    initialize(): void {
-        void this.initializeAsync();
+    initialize(): Promise<void> {
+        return this.initializeAsync();
     }
 
-    save(): void {
-        // Persist both development area and scenario explorer state.
-        void this.saveWithPicker();
+    save(): Promise<void> {
+        return this.saveWithPicker();
     }
 
-    load(): void {
-        // Restore persisted extension state into providers.
-        void this.loadWithPicker();
+    load(): Promise<void> {
+        return this.loadWithPicker();
     }
 
-    reset(): void {
-        // Reset in-memory state to a clean baseline.
+    async reset(): Promise<void> {
         this.devProvider.clear();
         this.scenarioProvider.applyWorkspaceState(this.createEmptyScenarioWorkspaceState());
-        void this.applyTreeViewState({
-            srcExplorerExpanded: [],
-            scenarioExplorerExpanded: []
-        });
+        await this.applyTreeViewState(this.createEmptyTreeViewState());
 
-        const basePath = getBasePath();
-        if (basePath) {
-            const defaultWorkspacePath = getDefaultWorkspaceConfigPath(basePath);
-            void this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, defaultWorkspacePath);
-            this.writeWorkspaceConfig(defaultWorkspacePath, this.createCurrentConfig());
+        const targetPath = this.resolveActiveWorkspacePath();
+        if (targetPath) {
+            await this.setActiveWorkspaceConfigPath(targetPath);
+            this.writeWorkspaceConfig(targetPath, this.createCurrentConfig());
         }
 
         void vscode.window.showInformationMessage('Workspace configuration has been reset.');
     }
 
-    persistDefaultWorkspace(): void {
-        const basePath = getBasePath();
-        if (!basePath) {
+    persistActiveWorkspace(): void {
+        const targetPath = this.resolveActiveWorkspacePath();
+        if (!targetPath) {
             return;
         }
 
-        const defaultWorkspacePath = getDefaultWorkspaceConfigPath(basePath);
-        this.writeWorkspaceConfig(defaultWorkspacePath, this.createCurrentConfig());
+        this.writeWorkspaceConfig(targetPath, this.createCurrentConfig());
     }
 
     private async saveWithPicker(): Promise<void> {
-        const selected = await pickWorkspaceToSave();
+        const activePath = this.resolveActiveWorkspacePath();
+        const selected = await pickWorkspaceToSave(activePath ? vscode.Uri.file(activePath) : undefined);
         if (!selected) {
             return;
         }
 
         this.writeWorkspaceConfig(selected.fsPath, this.createCurrentConfig());
-        await this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, selected.fsPath);
-        this.persistDefaultWorkspace();
+        await this.setActiveWorkspaceConfigPath(selected.fsPath);
         void vscode.window.showInformationMessage(`Workspace configuration saved to ${selected.fsPath}`);
     }
 
     private async loadWithPicker(): Promise<void> {
-        const selected = await pickWorkspaceToLoad();
+        const activePath = this.resolveActiveWorkspacePath();
+        const selected = await pickWorkspaceToLoad(activePath ? vscode.Uri.file(activePath) : undefined);
         if (!selected) {
             return;
         }
@@ -95,36 +98,31 @@ export class WorkspaceManager {
     }
 
     private async initializeAsync(): Promise<void> {
-        const basePath = getBasePath();
-        if (!basePath) {
+        const defaultWorkspacePath = this.getDefaultWorkspacePath();
+        if (!defaultWorkspacePath) {
             return;
         }
 
-        const defaultWorkspacePath = getDefaultWorkspaceConfigPath(basePath);
         const lastUsedPath = this.state.get<string>(STORAGE_KEYS.lastWorkspaceConfigPath);
-        const candidate = lastUsedPath ?? defaultWorkspacePath;
-        const loaded = await this.tryLoadFromPath(candidate, false);
-        if (loaded) {
+        const candidatePath = lastUsedPath && fs.existsSync(lastUsedPath) ? lastUsedPath : defaultWorkspacePath;
+
+        if (await this.tryLoadFromPath(candidatePath, false)) {
             return;
         }
 
-        if (candidate !== defaultWorkspacePath) {
-            const fallbackLoaded = await this.tryLoadFromPath(defaultWorkspacePath, false);
-            if (fallbackLoaded) {
-                await this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, defaultWorkspacePath);
-                return;
-            }
+        if (candidatePath !== defaultWorkspacePath && (await this.tryLoadFromPath(defaultWorkspacePath, false))) {
+            await this.setActiveWorkspaceConfigPath(defaultWorkspacePath);
+            return;
         }
 
-        this.persistDefaultWorkspace();
-        await this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, defaultWorkspacePath);
+        this.writeWorkspaceConfig(defaultWorkspacePath, this.createCurrentConfig());
+        await this.setActiveWorkspaceConfigPath(defaultWorkspacePath);
     }
 
     private async loadFromPath(workspacePath: string, announce: boolean): Promise<void> {
         const parsed = this.readWorkspaceConfig(workspacePath);
         await this.applyConfig(parsed);
-        await this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, workspacePath);
-        this.persistDefaultWorkspace();
+        await this.setActiveWorkspaceConfigPath(workspacePath);
         if (announce) {
             void vscode.window.showInformationMessage(`Workspace configuration loaded from ${workspacePath}`);
         }
@@ -152,22 +150,39 @@ export class WorkspaceManager {
 
     private async applyConfig(parsed: Partial<ToolkitWorkspaceConfig>): Promise<void> {
         this.devProvider.applyWorkspaceItems(Array.isArray(parsed.devArea) ? parsed.devArea : []);
-        this.scenarioProvider.applyWorkspaceState({
-            filter: parsed.scenario?.filter ?? '',
-            scenarioSortMode: parsed.scenario?.scenarioSortMode ?? 'name',
-            pinnedScenarios: parsed.scenario?.pinnedScenarios ?? [],
-            pinnedIoRuns: parsed.scenario?.pinnedIoRuns ?? [],
-            runSortByScenario: parsed.scenario?.runSortByScenario ?? {},
-            tagCatalog: parsed.scenario?.tagCatalog ?? [],
-            runTagsByPath: parsed.scenario?.runTagsByPath ?? {},
-            runFilterTagIdsByScenario: parsed.scenario?.runFilterTagIdsByScenario ?? {},
-            globalRunFlags: parsed.scenario?.globalRunFlags ?? '',
-            sudoExecutionByScenario: parsed.scenario?.sudoExecutionByScenario ?? {}
-        });
-        await this.applyTreeViewState({
-            srcExplorerExpanded: parsed.treeViews?.srcExplorerExpanded ?? [],
-            scenarioExplorerExpanded: parsed.treeViews?.scenarioExplorerExpanded ?? []
-        });
+        this.scenarioProvider.applyWorkspaceState(this.normalizeScenarioState(parsed.scenario));
+        await this.applyTreeViewState(this.normalizeTreeViewState(parsed.treeViews));
+    }
+
+    private normalizeScenarioState(state: Partial<ScenarioWorkspaceState> | undefined): ScenarioWorkspaceState {
+        return {
+            filter: state?.filter ?? '',
+            scenarioSortMode: state?.scenarioSortMode ?? 'name',
+            pinnedScenarios: state?.pinnedScenarios ?? [],
+            pinnedIoRuns: state?.pinnedIoRuns ?? [],
+            runSortByScenario: state?.runSortByScenario ?? {},
+            tagCatalog: state?.tagCatalog ?? [],
+            runTagsByPath: state?.runTagsByPath ?? {},
+            runFilterTagIdsByScenario: state?.runFilterTagIdsByScenario ?? {},
+            globalRunFlags: state?.globalRunFlags ?? '',
+            sudoExecutionByScenario: state?.sudoExecutionByScenario ?? {}
+        };
+    }
+
+    private normalizeTreeViewState(state: Partial<TreeViewWorkspaceState> | undefined): TreeViewWorkspaceState {
+        return {
+            srcExplorerExpanded: state?.srcExplorerExpanded ?? [],
+            scenarioExplorerExpanded: state?.scenarioExplorerExpanded ?? [],
+            componentViews: {
+                devAreaVisible: state?.componentViews?.devAreaVisible ?? DEFAULT_COMPONENT_VIEWS.devAreaVisible,
+                srcExplorerVisible: state?.componentViews?.srcExplorerVisible ?? DEFAULT_COMPONENT_VIEWS.srcExplorerVisible,
+                scenarioExplorerVisible:
+                    state?.componentViews?.scenarioExplorerVisible ?? DEFAULT_COMPONENT_VIEWS.scenarioExplorerVisible,
+                programInfoVisible: state?.componentViews?.programInfoVisible ?? DEFAULT_COMPONENT_VIEWS.programInfoVisible,
+                configInspectorVisible:
+                    state?.componentViews?.configInspectorVisible ?? DEFAULT_COMPONENT_VIEWS.configInspectorVisible
+            }
+        };
     }
 
     private createCurrentConfig(): ToolkitWorkspaceConfig {
@@ -194,8 +209,56 @@ export class WorkspaceManager {
         };
     }
 
+    private createEmptyTreeViewState(): TreeViewWorkspaceState {
+        return {
+            srcExplorerExpanded: [],
+            scenarioExplorerExpanded: [],
+            componentViews: { ...DEFAULT_COMPONENT_VIEWS }
+        };
+    }
+
     private writeWorkspaceConfig(workspacePath: string, config: ToolkitWorkspaceConfig): void {
         fs.mkdirSync(path.dirname(workspacePath), { recursive: true });
         fs.writeFileSync(workspacePath, JSON.stringify(config, null, 2));
+    }
+
+    private resolveActiveWorkspacePath(): string | undefined {
+        if (this.activeWorkspaceConfigPath && fs.existsSync(this.activeWorkspaceConfigPath)) {
+            return this.activeWorkspaceConfigPath;
+        }
+
+        this.activeWorkspaceConfigPath = undefined;
+        const fromState = this.state.get<string>(STORAGE_KEYS.lastWorkspaceConfigPath);
+        if (fromState && fs.existsSync(fromState)) {
+            this.activeWorkspaceConfigPath = fromState;
+            return fromState;
+        }
+
+        const defaultWorkspacePath = this.getDefaultWorkspacePath();
+        if (!defaultWorkspacePath) {
+            return undefined;
+        }
+
+        if (!fs.existsSync(defaultWorkspacePath)) {
+            this.writeWorkspaceConfig(defaultWorkspacePath, this.createCurrentConfig());
+        }
+
+        this.activeWorkspaceConfigPath = defaultWorkspacePath;
+        void this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, defaultWorkspacePath);
+        return defaultWorkspacePath;
+    }
+
+    private getDefaultWorkspacePath(): string | undefined {
+        const basePath = getBasePath();
+        if (!basePath) {
+            return undefined;
+        }
+
+        return getDefaultWorkspaceConfigPath(basePath);
+    }
+
+    private async setActiveWorkspaceConfigPath(workspacePath: string): Promise<void> {
+        this.activeWorkspaceConfigPath = workspacePath;
+        await this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, workspacePath);
     }
 }

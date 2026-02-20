@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getBasePath, getScenarioPath } from './config';
-import { TREE_COMMANDS, VIEW_IDS } from './constants';
+import { TREE_COMMANDS, VIEW_IDS, WORKBENCH_COMMANDS } from './constants';
 import { registerCommands } from './commands/registerCommands';
 import { ConfigInspectorProvider } from './configInspector/configInspectorProvider';
 import { createWatchers } from './extension/watchers';
@@ -12,7 +12,7 @@ import { ScenarioProvider } from './providers/scenarioProvider';
 import { SrcProvider } from './providers/srcProvider';
 import { openRunAnalysisPanel } from './runAnalysis/runAnalysisPanel';
 import { WorkspaceManager } from './workspace/workspaceManager';
-import { TreeViewWorkspaceState } from './workspace/treeViewState';
+import { ComponentViewWorkspaceState, TreeViewWorkspaceState } from './workspace/treeViewState';
 
 // Extension entrypoint: compose providers, views, commands, and watchers.
 export function activate(context: vscode.ExtensionContext): void {
@@ -24,6 +24,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const configInspectorProvider = new ConfigInspectorProvider(context);
     const srcExpanded = new Set<string>();
     const scenarioExpanded = new Set<string>();
+    let isApplyingTreeViewState = false;
+    let isWorkspaceInitializationComplete = false;
+    let isWorkspaceStateOperationInProgress = false;
 
     const devTree = vscode.window.createTreeView(VIEW_IDS.devArea, {
         treeDataProvider: devProvider,
@@ -45,6 +48,13 @@ export function activate(context: vscode.ExtensionContext): void {
         treeDataProvider: programInfoProvider,
         showCollapseAll: false
     });
+    let componentViewsState: ComponentViewWorkspaceState = {
+        devAreaVisible: devTree.visible,
+        srcExplorerVisible: srcTree.visible,
+        scenarioExplorerVisible: scenarioTree.visible,
+        programInfoVisible: programInfoTree.visible,
+        configInspectorVisible: configInspectorProvider.isVisible()
+    };
 
     context.subscriptions.push(
         srcTree.onDidExpandElement(event => srcExpanded.add(event.element.uri.fsPath)),
@@ -54,32 +64,58 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     const getTreeViewState = (): TreeViewWorkspaceState => ({
-        srcExplorerExpanded: [...srcExpanded],
-        scenarioExplorerExpanded: [...scenarioExpanded]
+        srcExplorerExpanded: componentViewsState.srcExplorerVisible ? [...srcExpanded] : [],
+        scenarioExplorerExpanded: [...scenarioExpanded],
+        componentViews: { ...componentViewsState }
     });
 
     const applyTreeViewState = async (state: TreeViewWorkspaceState): Promise<void> => {
-        srcExpanded.clear();
-        scenarioExpanded.clear();
-        for (const item of state.srcExplorerExpanded ?? []) {
-            srcExpanded.add(item);
-        }
-        for (const item of state.scenarioExplorerExpanded ?? []) {
-            scenarioExpanded.add(item);
-        }
+        isApplyingTreeViewState = true;
+        const desiredSrcExpanded = state.componentViews?.srcExplorerVisible
+            ? [...(state.srcExplorerExpanded ?? [])]
+            : [];
+        const desiredScenarioExpanded = [...(state.scenarioExplorerExpanded ?? [])];
 
-        // Normalize UI before replaying expansion state.
         try {
-            await vscode.commands.executeCommand(TREE_COMMANDS.collapseSrcExplorer);
-        } catch {}
-        try {
-            await vscode.commands.executeCommand(TREE_COMMANDS.collapseScenarioExplorer);
-        } catch {}
+            // Normalize UI before replaying expansion state.
+            try {
+                await vscode.commands.executeCommand(TREE_COMMANDS.collapseSrcExplorer);
+            } catch {}
+            try {
+                await vscode.commands.executeCommand(TREE_COMMANDS.collapseScenarioExplorer);
+            } catch {}
 
-        await revealExpandedPaths(srcTree, [...srcExpanded], pathValue => srcProvider.nodeFromPath(pathValue));
-        await revealExpandedPaths(scenarioTree, [...scenarioExpanded], pathValue =>
-            scenarioProvider.nodeFromPath(pathValue)
-        );
+            await revealExpandedPaths(srcTree, desiredSrcExpanded, pathValue => srcProvider.nodeFromPath(pathValue));
+            await revealExpandedPaths(scenarioTree, desiredScenarioExpanded, pathValue =>
+                scenarioProvider.nodeFromPath(pathValue)
+            );
+
+            componentViewsState = { ...state.componentViews };
+            const componentViews = componentViewsState;
+            if (componentViews && Object.values(componentViews).some(Boolean)) {
+                try {
+                    await vscode.commands.executeCommand(
+                        `${WORKBENCH_COMMANDS.showExtensionViewContainerPrefix}${VIEW_IDS.toolkitContainer}`
+                    );
+                } catch {}
+            }
+            if (componentViews?.configInspectorVisible) {
+                try {
+                    await vscode.commands.executeCommand(`${VIEW_IDS.configInspector}.focus`);
+                } catch {}
+            }
+        } finally {
+            // Reconcile sets to the intended restored state (collapse/reveal events can mutate them).
+            srcExpanded.clear();
+            scenarioExpanded.clear();
+            for (const item of desiredSrcExpanded) {
+                srcExpanded.add(item);
+            }
+            for (const item of desiredScenarioExpanded) {
+                scenarioExpanded.add(item);
+            }
+            isApplyingTreeViewState = false;
+        }
     };
 
     const workspaceManager = new WorkspaceManager(
@@ -92,12 +128,39 @@ export function activate(context: vscode.ExtensionContext): void {
 
     let defaultWorkspaceSaveTimer: NodeJS.Timeout | undefined;
     const scheduleDefaultWorkspaceSave = () => {
+        if (
+            isApplyingTreeViewState ||
+            !isWorkspaceInitializationComplete ||
+            isWorkspaceStateOperationInProgress
+        ) {
+            return;
+        }
         if (defaultWorkspaceSaveTimer) {
             clearTimeout(defaultWorkspaceSaveTimer);
         }
         defaultWorkspaceSaveTimer = setTimeout(() => {
-            workspaceManager.persistDefaultWorkspace();
+            workspaceManager.persistActiveWorkspace();
         }, 250);
+    };
+
+    const runWorkspaceStateOperation = async (action: () => Promise<void>): Promise<void> => {
+        if (isWorkspaceStateOperationInProgress) {
+            return;
+        }
+        isWorkspaceStateOperationInProgress = true;
+        try {
+            await action();
+            programInfoProvider.refresh();
+        } finally {
+            isWorkspaceStateOperationInProgress = false;
+        }
+    };
+
+    const reinitializeWorkspaceState = async (): Promise<void> => {
+        isWorkspaceInitializationComplete = false;
+        await runWorkspaceStateOperation(() => workspaceManager.initialize());
+        isWorkspaceInitializationComplete = true;
+        programInfoProvider.refresh();
     };
 
     context.subscriptions.push(
@@ -130,15 +193,23 @@ export function activate(context: vscode.ExtensionContext): void {
         });
     };
 
-    syncPythonInterpreter();
     programInfoProvider.refresh();
-    workspaceManager.initialize();
+
+    const saveWorkspace = () => {
+        void runWorkspaceStateOperation(() => workspaceManager.save());
+    };
+    const loadWorkspace = () => {
+        void runWorkspaceStateOperation(() => workspaceManager.load());
+    };
+    const resetWorkspace = () => {
+        void runWorkspaceStateOperation(() => workspaceManager.reset());
+    };
 
     registerCommands(context, { devProvider, scenarioProvider }, {
         refreshToolkit,
-        saveWorkspace: () => workspaceManager.save(),
-        loadWorkspace: () => workspaceManager.load(),
-        resetWorkspace: () => workspaceManager.reset(),
+        saveWorkspace,
+        loadWorkspace,
+        resetWorkspace,
         openConfigInspector: uri => {
             void configInspectorProvider.openForConfigsFolder(uri);
         },
@@ -160,20 +231,53 @@ export function activate(context: vscode.ExtensionContext): void {
         srcTree.onDidCollapseElement(() => scheduleDefaultWorkspaceSave()),
         scenarioTree.onDidExpandElement(() => scheduleDefaultWorkspaceSave()),
         scenarioTree.onDidCollapseElement(() => scheduleDefaultWorkspaceSave()),
+        devTree.onDidChangeVisibility(() => scheduleDefaultWorkspaceSave()),
+        srcTree.onDidChangeVisibility(() => scheduleDefaultWorkspaceSave()),
+        scenarioTree.onDidChangeVisibility(() => scheduleDefaultWorkspaceSave()),
+        programInfoTree.onDidChangeVisibility(() => scheduleDefaultWorkspaceSave()),
+        configInspectorProvider.onDidChangeVisibility(visible => {
+            componentViewsState.configInspectorVisible = visible;
+            scheduleDefaultWorkspaceSave();
+        }),
         profileManager.onDidChangeActiveProfile(() => {
-            syncPythonInterpreter();
-            refreshToolkit();
+            void (async () => {
+                syncPythonInterpreter();
+                await reinitializeWorkspaceState();
+                refreshToolkit();
+            })();
         }),
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
             void profileManager.handleWorkspaceFoldersChanged().then(() => {
-                syncPythonInterpreter();
-                refreshToolkit();
+                void (async () => {
+                    syncPythonInterpreter();
+                    await reinitializeWorkspaceState();
+                    refreshToolkit();
+                })();
             });
         })
     );
 
-    void profileManager.initialize().then(() => {
+    context.subscriptions.push(
+        devTree.onDidChangeVisibility(() => {
+            componentViewsState.devAreaVisible = devTree.visible;
+        }),
+        srcTree.onDidChangeVisibility(() => {
+            componentViewsState.srcExplorerVisible = srcTree.visible;
+            if (!srcTree.visible) {
+                srcExpanded.clear();
+            }
+        }),
+        scenarioTree.onDidChangeVisibility(() => {
+            componentViewsState.scenarioExplorerVisible = scenarioTree.visible;
+        }),
+        programInfoTree.onDidChangeVisibility(() => {
+            componentViewsState.programInfoVisible = programInfoTree.visible;
+        })
+    );
+
+    void profileManager.initialize().then(async () => {
         syncPythonInterpreter();
+        await reinitializeWorkspaceState();
         refreshToolkit();
     });
 }

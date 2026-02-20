@@ -26,6 +26,8 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
     private watcher?: vscode.FileSystemWatcher;
     private ignoreFsEventsUntil = 0;
     private readonly pinnedParameterIds = new Set<string>();
+    private readonly visibilityEmitter = new vscode.EventEmitter<boolean>();
+    readonly onDidChangeVisibility = this.visibilityEmitter.event;
 
     constructor(private readonly context: vscode.ExtensionContext) {
         const saved = context.workspaceState.get<string[]>(STORAGE_KEYS.pinnedConfigParameters, []);
@@ -36,6 +38,7 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
 
     resolveWebviewView(view: vscode.WebviewView): void {
         this.view = view;
+        this.visibilityEmitter.fire(view.visible);
         view.webview.options = {
             enableScripts: true,
             localResourceRoots: [
@@ -60,6 +63,13 @@ export class ConfigInspectorProvider implements vscode.WebviewViewProvider {
                 void this.openParameterInEditor(message.id);
             }
         });
+        view.onDidChangeVisibility(() => {
+            this.visibilityEmitter.fire(view.visible);
+        });
+    }
+
+    isVisible(): boolean {
+        return this.view?.visible ?? false;
     }
 
     async openForConfigsFolder(uri: vscode.Uri): Promise<void> {

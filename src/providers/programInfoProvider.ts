@@ -24,6 +24,7 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
     private readonly emitter = new vscode.EventEmitter<ProgramInfoItem | undefined>();
     readonly onDidChangeTreeData = this.emitter.event;
     private readonly disposables: vscode.Disposable[] = [];
+    private readonly sectionItems = new Map<ProgramInfoSection, ProgramInfoItem>();
 
     constructor(
         private readonly scenarioProvider: ScenarioProvider,
@@ -51,12 +52,7 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
 
     getChildren(element?: ProgramInfoItem): ProgramInfoItem[] {
         if (!element) {
-            return [
-                this.createSectionItem('Current Profile', 'currentProfile'),
-                this.createSectionItem('Current Program', 'currentProgram'),
-                this.createSectionItem('Current Workspace Config', 'currentWorkspaceConfig'),
-                this.createSectionItem('Last Execution', 'lastExecution')
-            ];
+            return this.getRootSectionItems();
         }
 
         if (element.section === 'currentProfile') {
@@ -78,8 +74,42 @@ export class ProgramInfoProvider implements vscode.TreeDataProvider<ProgramInfoI
         return [];
     }
 
+    private getRootSectionItems(): ProgramInfoItem[] {
+        return [
+            this.getOrCreateSectionItem('currentProfile'),
+            this.getOrCreateSectionItem('currentProgram'),
+            this.getOrCreateSectionItem('currentWorkspaceConfig'),
+            this.getOrCreateSectionItem('lastExecution')
+        ];
+    }
+
+    private getOrCreateSectionItem(section: ProgramInfoSection): ProgramInfoItem {
+        const existing = this.sectionItems.get(section);
+        if (existing) {
+            return existing;
+        }
+
+        const created = this.createSectionItem(this.labelForSection(section), section);
+        this.sectionItems.set(section, created);
+        return created;
+    }
+
+    private labelForSection(section: ProgramInfoSection): string {
+        switch (section) {
+            case 'currentProfile':
+                return 'Current Profile';
+            case 'currentProgram':
+                return 'Current Program';
+            case 'currentWorkspaceConfig':
+                return 'Current Workspace Config';
+            default:
+                return 'Last Execution';
+        }
+    }
+
     private createSectionItem(label: string, section: ProgramInfoSection | 'currentProfile'): ProgramInfoItem {
         const item = new ProgramInfoItem(label, vscode.TreeItemCollapsibleState.Collapsed, section);
+        item.id = `programInfo.section.${section}`;
         item.contextValue = section === 'currentProfile' ? 'programInfoProfile' : 'programInfoSection';
         item.iconPath = new vscode.ThemeIcon(
             section === 'currentProgram'
