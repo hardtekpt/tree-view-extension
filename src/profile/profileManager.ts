@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DEFAULTS, FOLDER_NAMES } from '../constants';
 import { validateFilenameParser } from '../providers/scenario/filenameMetadata';
+import { findPythonInBasePath } from '../providers/scenario/runtimeUtils';
 import { existsDir } from '../utils/fileSystem';
 import { asStringArray, asStringRecord, isJsonRecord } from '../utils/json';
 import { OutputFilenameParser, OutputFilenameParserField } from './profileTypes';
@@ -40,6 +41,27 @@ interface BindingsFileShape {
 export interface ProfileValidationResult {
     valid: boolean;
     errors: string[];
+}
+
+interface ProfileStudioParserDraft {
+    id: string;
+    pattern: string;
+    appliesTo: string;
+    appliesToKind: 'files' | 'folders' | 'both';
+    titleTemplate: string;
+    fieldsJson: string;
+}
+
+interface ProfileStudioDraft {
+    name: string;
+    basePath: string;
+    pythonStrategy: PythonStrategy;
+    pythonPath: string;
+    scenariosRoot: string;
+    scenarioConfigsFolderName: string;
+    scenarioIoFolderName: string;
+    runCommandTemplate: string;
+    outputFilenameParsers: ProfileStudioParserDraft[];
 }
 
 export class ProfileManager implements vscode.Disposable {
@@ -216,127 +238,7 @@ export class ProfileManager implements vscode.Disposable {
         seed: ProgramProfile | undefined,
         workspacePath: string
     ): Promise<ProgramProfile | undefined> {
-        const name = await vscode.window.showInputBox({
-            value: seed?.name ?? path.basename(workspacePath),
-            prompt: 'Profile name',
-            ignoreFocusOut: true,
-            validateInput: value => (value.trim() ? undefined : 'Profile name is required')
-        });
-        if (name === undefined) {
-            return undefined;
-        }
-
-        const basePath = await vscode.window.showInputBox({
-            value: seed?.basePath ?? workspacePath,
-            prompt: 'Base path for this program',
-            ignoreFocusOut: true,
-            validateInput: value => (value.trim() ? undefined : 'Base path is required')
-        });
-        if (basePath === undefined) {
-            return undefined;
-        }
-
-        const strategyPick = await vscode.window.showQuickPick(
-            [
-                { label: 'Auto detect virtual environment', strategy: 'autoVenv' as const },
-                { label: 'Use fixed python path', strategy: 'fixedPath' as const }
-            ],
-            { placeHolder: 'Python interpreter strategy' }
-        );
-        if (!strategyPick) {
-            return undefined;
-        }
-
-        let pythonPath = seed?.pythonPath;
-        if (strategyPick.strategy === 'fixedPath') {
-            const enteredPython = await vscode.window.showInputBox({
-                value: pythonPath ?? DEFAULTS.pythonCommand,
-                prompt: 'Fixed python executable path/command',
-                ignoreFocusOut: true,
-                validateInput: value => (value.trim() ? undefined : 'Python path is required for fixed strategy')
-            });
-            if (enteredPython === undefined) {
-                return undefined;
-            }
-            pythonPath = enteredPython.trim();
-        } else {
-            pythonPath = undefined;
-        }
-
-        const scenariosRoot = await vscode.window.showInputBox({
-            value: seed?.scenariosRoot ?? FOLDER_NAMES.scenariosRoot,
-            prompt: 'Scenarios root folder name/path (relative to base path)',
-            ignoreFocusOut: true,
-            validateInput: value => (value.trim() ? undefined : 'Scenarios root is required')
-        });
-        if (scenariosRoot === undefined) {
-            return undefined;
-        }
-
-        const configsFolder = await vscode.window.showInputBox({
-            value: seed?.scenarioConfigsFolderName ?? DEFAULTS.scenarioConfigsFolderName,
-            prompt: 'Scenario config folder name',
-            ignoreFocusOut: true,
-            validateInput: value => (sanitizeFolderName(value).length > 0 ? undefined : 'Folder name is required')
-        });
-        if (configsFolder === undefined) {
-            return undefined;
-        }
-
-        const ioFolder = await vscode.window.showInputBox({
-            value: seed?.scenarioIoFolderName ?? DEFAULTS.scenarioIoFolderName,
-            prompt: 'Scenario output folder name',
-            ignoreFocusOut: true,
-            validateInput: value => (sanitizeFolderName(value).length > 0 ? undefined : 'Folder name is required')
-        });
-        if (ioFolder === undefined) {
-            return undefined;
-        }
-
-        const runTemplate = await vscode.window.showInputBox({
-            value: seed?.runCommandTemplate ?? DEFAULTS.runCommandTemplate,
-            prompt: 'Run command template (must include <scenario_name>)',
-            ignoreFocusOut: true,
-            validateInput: value => (value.includes('<scenario_name>') ? undefined : "Must include '<scenario_name>'")
-        });
-        if (runTemplate === undefined) {
-            return undefined;
-        }
-
-        const outputFilenameParsers = await this.configureFilenameParsers(seed?.outputFilenameParsers ?? []);
-        if (!outputFilenameParsers) {
-            return undefined;
-        }
-
-        const now = Date.now();
-        const profile: ProgramProfile = {
-            id: seed?.id ?? createProfileId(),
-            name: name.trim(),
-            basePath: basePath.trim(),
-            pythonStrategy: strategyPick.strategy,
-            pythonPath,
-            scenariosRoot: normalizeRelativeSegment(scenariosRoot),
-            scenarioConfigsFolderName: sanitizeFolderName(configsFolder),
-            scenarioIoFolderName: sanitizeFolderName(ioFolder),
-            runCommandTemplate: runTemplate.trim(),
-            outputFilenameParsers,
-            createdAtMs: seed?.createdAtMs ?? now,
-            updatedAtMs: now
-        };
-
-        const validation = validateProfileStructure(profile);
-        if (!validation.valid) {
-            const proceed = await vscode.window.showWarningMessage(
-                `Profile saved with structure warnings:\n${validation.errors.join('\n')}`,
-                'Save Anyway',
-                'Cancel'
-            );
-            if (proceed !== 'Save Anyway') {
-                return undefined;
-            }
-        }
-
-        return profile;
+        return this.openProfileStudio(seed, workspacePath);
     }
 
     private getCurrentWorkspacePath(): string | undefined {
@@ -532,168 +434,220 @@ export class ProfileManager implements vscode.Disposable {
         }
     }
 
-    private async configureFilenameParsers(
-        seed: OutputFilenameParser[]
-    ): Promise<OutputFilenameParser[] | undefined> {
-        const mode = await vscode.window.showQuickPick(
-            [
-                { label: `Keep existing (${seed.length})`, value: 'keep' as const },
-                { label: `Add parsers to existing (${seed.length})`, value: 'append' as const },
-                { label: 'Replace parser templates', value: 'replace' as const },
-                { label: 'Clear parser templates', value: 'clear' as const }
-            ],
-            { placeHolder: 'Filename metadata parser templates' }
+    private async openProfileStudio(
+        seed: ProgramProfile | undefined,
+        workspacePath: string
+    ): Promise<ProgramProfile | undefined> {
+        const panel = vscode.window.createWebviewPanel(
+            'scenarioToolkitProfileStudio',
+            seed ? `Edit Profile: ${seed.name}` : 'Create Profile',
+            vscode.ViewColumn.Active,
+            { enableScripts: true }
         );
-        if (!mode) {
-            return undefined;
-        }
-        if (mode.value === 'keep') {
-            return seed;
-        }
-        if (mode.value === 'clear') {
-            return [];
-        }
 
-        const parsers: OutputFilenameParser[] = mode.value === 'append' ? [...seed] : [];
-        while (true) {
-            const parser = await this.collectSingleFilenameParser(parsers.length + 1);
-            if (!parser) {
-                break;
-            }
-            parsers.push(parser);
+        const initialDraft: ProfileStudioDraft = {
+            name: seed?.name ?? path.basename(workspacePath),
+            basePath: seed?.basePath ?? workspacePath,
+            pythonStrategy: seed?.pythonStrategy ?? 'autoVenv',
+            pythonPath: seed?.pythonPath ?? DEFAULTS.pythonCommand,
+            scenariosRoot: seed?.scenariosRoot ?? FOLDER_NAMES.scenariosRoot,
+            scenarioConfigsFolderName: seed?.scenarioConfigsFolderName ?? DEFAULTS.scenarioConfigsFolderName,
+            scenarioIoFolderName: seed?.scenarioIoFolderName ?? DEFAULTS.scenarioIoFolderName,
+            runCommandTemplate: seed?.runCommandTemplate ?? DEFAULTS.runCommandTemplate,
+            outputFilenameParsers: (seed?.outputFilenameParsers ?? []).map(parser => ({
+                id: parser.id,
+                pattern: parser.pattern,
+                appliesTo: (parser.appliesTo ?? []).join(', '),
+                appliesToKind: parser.appliesToKind ?? 'files',
+                titleTemplate: parser.titleTemplate ?? '',
+                fieldsJson: JSON.stringify(parser.fields ?? [], null, 2)
+            }))
+        };
 
-            const shouldContinue = await vscode.window.showQuickPick(
-                [
-                    { label: 'Add another parser', value: 'yes' },
-                    { label: 'Done', value: 'no' }
-                ],
-                { placeHolder: 'Add another filename parser template?' }
-            );
-            if (!shouldContinue || shouldContinue.value === 'no') {
-                break;
-            }
-        }
-        return parsers;
+        panel.webview.html = buildProfileStudioHtml(initialDraft, seed ? 'edit' : 'create');
+
+        return new Promise<ProgramProfile | undefined>(resolve => {
+            let settled = false;
+            const finish = (value: ProgramProfile | undefined) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                resolve(value);
+            };
+
+            const disposeOnFinish = panel.onDidDispose(() => finish(undefined));
+            const messageHandler = panel.webview.onDidReceiveMessage(async (message: unknown) => {
+                if (!isJsonRecord(message) || typeof message.type !== 'string') {
+                    return;
+                }
+
+                if (message.type === 'detectPythonFromBasePath') {
+                    const basePathRaw = message.basePath;
+                    const basePath = typeof basePathRaw === 'string' ? basePathRaw.trim() : '';
+                    const detectedPython = basePath ? (findPythonInBasePath(basePath) ?? DEFAULTS.pythonCommand) : DEFAULTS.pythonCommand;
+                    void panel.webview.postMessage({
+                        type: 'detectedPythonPath',
+                        pythonPath: detectedPython
+                    });
+                    return;
+                }
+
+                if (message.type === 'cancel') {
+                    panel.dispose();
+                    finish(undefined);
+                    return;
+                }
+
+                if (message.type !== 'save' || !isJsonRecord(message.payload)) {
+                    return;
+                }
+
+                const built = this.buildProfileFromStudioDraft(message.payload, seed);
+                if (!built.valid) {
+                    void panel.webview.postMessage({ type: 'validation', errors: built.errors });
+                    return;
+                }
+
+                const validation = validateProfileStructure(built.profile);
+                if (!validation.valid) {
+                    const proceed = await vscode.window.showWarningMessage(
+                        `Profile saved with structure warnings:\n${validation.errors.join('\n')}`,
+                        'Save Anyway',
+                        'Cancel'
+                    );
+                    if (proceed !== 'Save Anyway') {
+                        void panel.webview.postMessage({ type: 'validation', errors: validation.errors });
+                        return;
+                    }
+                }
+
+                panel.dispose();
+                finish(built.profile);
+            });
+
+            panel.onDidDispose(() => {
+                disposeOnFinish.dispose();
+                messageHandler.dispose();
+            });
+        });
     }
 
-    private async collectSingleFilenameParser(index: number): Promise<OutputFilenameParser | undefined> {
-        const id = await vscode.window.showInputBox({
-            value: `parser_${index}`,
-            prompt: 'Parser id',
-            ignoreFocusOut: true,
-            validateInput: value => (value.trim() ? undefined : 'Parser id is required')
-        });
-        if (id === undefined) {
-            return undefined;
+    private buildProfileFromStudioDraft(
+        payload: Record<string, unknown>,
+        seed: ProgramProfile | undefined
+    ): { valid: true; profile: ProgramProfile } | { valid: false; errors: string[] } {
+        const errors: string[] = [];
+        const text = (key: string): string => {
+            const value = payload[key];
+            return typeof value === 'string' ? value.trim() : '';
+        };
+
+        const name = text('name');
+        const basePath = text('basePath');
+        const scenariosRoot = text('scenariosRoot');
+        const configsFolder = sanitizeFolderName(text('scenarioConfigsFolderName'));
+        const ioFolder = sanitizeFolderName(text('scenarioIoFolderName'));
+        const runTemplate = text('runCommandTemplate');
+        const strategy = payload.pythonStrategy === 'fixedPath' ? 'fixedPath' : 'autoVenv';
+        const pythonPath = strategy === 'fixedPath' ? text('pythonPath') : undefined;
+
+        if (!name) {
+            errors.push('Profile name is required.');
+        }
+        if (!basePath) {
+            errors.push('Base path is required.');
+        }
+        if (!scenariosRoot) {
+            errors.push('Scenarios root is required.');
+        }
+        if (!configsFolder) {
+            errors.push('Scenario config folder name is required.');
+        }
+        if (!ioFolder) {
+            errors.push('Scenario output folder name is required.');
+        }
+        if (!runTemplate.includes('<scenario_name>')) {
+            errors.push("Run command template must include '<scenario_name>'.");
+        }
+        if (strategy === 'fixedPath' && !pythonPath) {
+            errors.push('Python path is required for fixed strategy.');
         }
 
-        const pattern = await vscode.window.showInputBox({
-            prompt: 'Filename pattern (example: loss_{scenario}_{metric}_{epoch}.png or regex:^loss_(?<scenario>.+)\\.png$)',
-            ignoreFocusOut: true,
-            validateInput: value => (value.trim() ? undefined : 'Pattern is required')
-        });
-        if (pattern === undefined) {
-            return undefined;
-        }
-
-        let capturedFieldNames = extractCapturedFieldNamesFromPattern(pattern.trim());
-        if (capturedFieldNames.length === 0) {
-            const fieldListInput = await vscode.window.showInputBox({
-                prompt: 'Could not infer fields from pattern. Enter captured field names (comma-separated).',
-                ignoreFocusOut: true,
-                validateInput: value =>
-                    value
-                        .split(',')
-                        .map(item => item.trim())
-                        .filter(Boolean).length > 0
-                        ? undefined
-                        : 'At least one field name is required'
-            });
-            if (fieldListInput === undefined) {
-                return undefined;
+        const outputFilenameParsers: OutputFilenameParser[] = [];
+        const parserRows = Array.isArray(payload.outputFilenameParsers) ? payload.outputFilenameParsers : [];
+        for (let index = 0; index < parserRows.length; index += 1) {
+            const row = parserRows[index];
+            if (!isJsonRecord(row)) {
+                errors.push(`Parser #${index + 1}: invalid parser row.`);
+                continue;
             }
-            capturedFieldNames = fieldListInput
-                .split(',')
-                .map(item => item.trim())
-                .filter(Boolean);
-        }
+            const id = typeof row.id === 'string' ? row.id.trim() : '';
+            const pattern = typeof row.pattern === 'string' ? row.pattern.trim() : '';
+            const appliesTo = typeof row.appliesTo === 'string' ? row.appliesTo : '';
+            const appliesToKind = row.appliesToKind === 'folders' || row.appliesToKind === 'both' ? row.appliesToKind : 'files';
+            const titleTemplate = typeof row.titleTemplate === 'string' ? row.titleTemplate.trim() : '';
+            const fieldsJson = typeof row.fieldsJson === 'string' ? row.fieldsJson.trim() : '[]';
 
-        const fields: OutputFilenameParserField[] = [];
-        for (const fieldName of capturedFieldNames) {
-            const fieldType = await vscode.window.showQuickPick(
-                [
-                    { label: 'string', value: 'string' as const },
-                    { label: 'number', value: 'number' as const },
-                    { label: 'enum', value: 'enum' as const },
-                    { label: 'datetime', value: 'datetime' as const }
-                ],
-                { placeHolder: `Type for '${fieldName}'` }
-            );
-            if (!fieldType) {
-                return undefined;
+            if (!id) {
+                errors.push(`Parser #${index + 1}: id is required.`);
+                continue;
+            }
+            if (!pattern) {
+                errors.push(`Parser #${index + 1}: pattern is required.`);
+                continue;
             }
 
-            let enumValues: string[] | undefined;
-            if (fieldType.value === 'enum') {
-                const enumInput = await vscode.window.showInputBox({
-                    prompt: `Enum values for '${fieldName}' (comma-separated)`,
-                    ignoreFocusOut: true,
-                    validateInput: value => (value.trim() ? undefined : 'At least one enum value is required')
-                });
-                if (enumInput === undefined) {
-                    return undefined;
-                }
-                enumValues = enumInput
+            let parsedFields: unknown;
+            try {
+                parsedFields = JSON.parse(fieldsJson || '[]');
+            } catch {
+                errors.push(`Parser '${id}': fields JSON is invalid.`);
+                continue;
+            }
+            const fields = this.normalizeOutputFilenameParsers([
+                { id, pattern, fields: parsedFields, appliesTo: [], appliesToKind, titleTemplate }
+            ])[0]?.fields ?? [];
+
+            if (Array.isArray(parsedFields) && fields.length !== parsedFields.length) {
+                errors.push(`Parser '${id}': one or more fields are invalid.`);
+                continue;
+            }
+
+            outputFilenameParsers.push({
+                id,
+                pattern,
+                fields,
+                appliesTo: appliesTo
                     .split(',')
                     .map(value => value.trim())
-                    .filter(Boolean);
-            }
-
-            fields.push({
-                name: fieldName,
-                type: fieldType.value,
-                enumValues
+                    .filter(Boolean),
+                appliesToKind,
+                titleTemplate: titleTemplate || undefined
             });
         }
 
-        const appliesToInput = await vscode.window.showInputBox({
-            prompt: 'Optional applies-to rules (comma-separated, e.g. .png, */io/*). Leave empty for all files.',
-            ignoreFocusOut: true
-        });
-        if (appliesToInput === undefined) {
-            return undefined;
+        if (errors.length > 0) {
+            return { valid: false, errors };
         }
 
-        const appliesToKindPick = await vscode.window.showQuickPick(
-            [
-                { label: 'Files', value: 'files' as const },
-                { label: 'Folders', value: 'folders' as const },
-                { label: 'Files and Folders', value: 'both' as const }
-            ],
-            { placeHolder: 'Apply this parser to files, folders, or both?' }
-        );
-        if (!appliesToKindPick) {
-            return undefined;
-        }
-
-        const titleTemplateInput = await vscode.window.showInputBox({
-            prompt: 'Optional title template for analyzer (e.g. metric={metric}, id={id}). Use {fieldName} placeholders.',
-            ignoreFocusOut: true
-        });
-        if (titleTemplateInput === undefined) {
-            return undefined;
-        }
-
+        const now = Date.now();
         return {
-            id: id.trim(),
-            pattern: pattern.trim(),
-            fields,
-            appliesTo: appliesToInput
-                .split(',')
-                .map(value => value.trim())
-                .filter(Boolean),
-            appliesToKind: appliesToKindPick.value,
-            titleTemplate: titleTemplateInput.trim() || undefined
+            valid: true,
+            profile: {
+                id: seed?.id ?? createProfileId(),
+                name,
+                basePath,
+                pythonStrategy: strategy,
+                pythonPath,
+                scenariosRoot: normalizeRelativeSegment(scenariosRoot),
+                scenarioConfigsFolderName: configsFolder,
+                scenarioIoFolderName: ioFolder,
+                runCommandTemplate: runTemplate,
+                outputFilenameParsers,
+                createdAtMs: seed?.createdAtMs ?? now,
+                updatedAtMs: now
+            }
         };
     }
 }
@@ -781,19 +735,256 @@ function findDuplicates(values: string[]): string[] {
     return [...duplicates];
 }
 
-function extractCapturedFieldNamesFromPattern(pattern: string): string[] {
-    const names: string[] = [];
+function buildProfileStudioHtml(initialDraft: ProfileStudioDraft, mode: 'create' | 'edit'): string {
+    const initial = JSON.stringify(initialDraft).replace(/</g, '\\u003c');
+    const title = mode === 'edit' ? 'Edit Profile' : 'Create Profile';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 12px; }
+    .toolbar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; gap: 8px; padding: 10px 0; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-editorWidget-border); }
+    .toolbar .actions { display: flex; gap: 8px; }
+    button { border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; min-height: 30px; padding: 0 10px; cursor: pointer; }
+    button.secondary { background: transparent; color: var(--vscode-foreground); border-color: var(--vscode-editorWidget-border); }
+    .section { border: 1px solid var(--vscode-editorWidget-border); border-radius: 8px; margin-top: 12px; padding: 12px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+    input, select, textarea { color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border)); border-radius: 6px; padding: 6px 8px; font: inherit; }
+    textarea { min-height: 90px; }
+    .radio { display: flex; gap: 12px; align-items: center; padding-top: 4px; }
+    .parser-card { border: 1px solid var(--vscode-editorWidget-border); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+    .parser-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .errors { display: none; border: 1px solid var(--vscode-errorForeground); color: var(--vscode-errorForeground); border-radius: 8px; padding: 10px; margin-top: 12px; white-space: pre-wrap; }
+    .summary { background: var(--vscode-sideBar-background); border-radius: 8px; padding: 10px; font-size: 12px; white-space: pre-wrap; }
+    pre { margin: 0; font-size: 11px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <strong>Profile Studio: ${escapeHtml(title)}</strong>
+    <div class="actions">
+      <button class="secondary" id="cancelBtn">Cancel</button>
+      <button id="saveBtn">Save</button>
+    </div>
+  </div>
 
-    if (pattern.startsWith('regex:')) {
-        const raw = pattern.slice('regex:'.length);
-        for (const match of raw.matchAll(/\(\?<([a-zA-Z_][a-zA-Z0-9_]*)>/g)) {
-            names.push(match[1]);
+  <div id="errors" class="errors"></div>
+
+  <section class="section">
+    <h2>1. Basics</h2>
+    <div class="grid">
+      <label>Profile name<input id="name" /></label>
+      <label>Base path<input id="basePath" /></label>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>2. Python</h2>
+    <div class="radio">
+      <label><input type="radio" name="pythonStrategy" value="autoVenv" /> Auto venv</label>
+      <label><input type="radio" name="pythonStrategy" value="fixedPath" /> Fixed path</label>
+    </div>
+    <div class="grid" style="margin-top:8px;">
+      <label>Python path<input id="pythonPath" /></label>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>3. Structure</h2>
+    <div class="grid">
+      <label>Scenarios root<input id="scenariosRoot" /></label>
+      <label>Config folder<input id="scenarioConfigsFolderName" /></label>
+      <label>Output folder<input id="scenarioIoFolderName" /></label>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>4. Run Template</h2>
+    <label>Run command template<input id="runCommandTemplate" /></label>
+  </section>
+
+  <section class="section">
+    <h2>5. Filename Parsers</h2>
+    <div style="margin-bottom:8px;">
+      <button id="addParserBtn" class="secondary">Add parser</button>
+    </div>
+    <div id="parsersContainer"></div>
+  </section>
+
+  <section class="section">
+    <h2>6. Review</h2>
+    <div class="summary" id="summaryText"></div>
+    <div style="margin-top:8px;">
+      <pre id="jsonPreview"></pre>
+    </div>
+  </section>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    const initial = ${initial};
+    const parsersContainer = document.getElementById('parsersContainer');
+    const errorsEl = document.getElementById('errors');
+    const ids = ['name','basePath','pythonPath','scenariosRoot','scenarioConfigsFolderName','scenarioIoFolderName','runCommandTemplate'];
+
+    const byId = (id) => document.getElementById(id);
+    const readStrategy = () => document.querySelector('input[name="pythonStrategy"]:checked')?.value || 'autoVenv';
+    let detectTimer;
+
+    const parserTemplate = (parser = {}) => {
+      const row = document.createElement('div');
+      row.className = 'parser-card';
+      row.innerHTML = \`
+        <div class="parser-header">
+          <strong>Parser</strong>
+          <button type="button" class="secondary remove-parser">Remove</button>
+        </div>
+        <div class="grid">
+          <label>ID<input data-key="id" value="\${parser.id || ''}" /></label>
+          <label>Pattern<input data-key="pattern" value="\${parser.pattern || ''}" /></label>
+          <label>Applies to kind
+            <select data-key="appliesToKind">
+              <option value="files">files</option>
+              <option value="folders">folders</option>
+              <option value="both">both</option>
+            </select>
+          </label>
+          <label>Applies to (comma separated)<input data-key="appliesTo" value="\${parser.appliesTo || ''}" /></label>
+          <label>Title template<input data-key="titleTemplate" value="\${parser.titleTemplate || ''}" /></label>
+        </div>
+        <label style="margin-top:8px;">Fields JSON<textarea data-key="fieldsJson">\${parser.fieldsJson || '[]'}</textarea></label>
+      \`;
+      row.querySelector('[data-key="appliesToKind"]').value = parser.appliesToKind || 'files';
+      row.querySelector('.remove-parser').addEventListener('click', () => {
+        row.remove();
+        refreshReview();
+      });
+      row.querySelectorAll('input,select,textarea').forEach(el => el.addEventListener('input', refreshReview));
+      return row;
+    };
+
+    const getDraft = () => {
+      const draft = {};
+      ids.forEach(id => draft[id] = byId(id).value || '');
+      draft.pythonStrategy = readStrategy();
+      draft.outputFilenameParsers = [...parsersContainer.querySelectorAll('.parser-card')].map(card => {
+        const read = (key) => card.querySelector('[data-key="' + key + '"]')?.value || '';
+        return {
+          id: read('id'),
+          pattern: read('pattern'),
+          appliesToKind: read('appliesToKind'),
+          appliesTo: read('appliesTo'),
+          titleTemplate: read('titleTemplate'),
+          fieldsJson: read('fieldsJson')
+        };
+      });
+      return draft;
+    };
+
+    const updatePythonPathInputState = () => {
+      const pythonInput = byId('pythonPath');
+      const auto = readStrategy() === 'autoVenv';
+      pythonInput.readOnly = auto;
+      pythonInput.title = auto ? 'Auto-detected from base path when Auto venv is selected' : '';
+    };
+
+    const requestDetectedPythonPath = () => {
+      if (readStrategy() !== 'autoVenv') {
+        return;
+      }
+      const basePath = byId('basePath').value || '';
+      vscode.postMessage({ type: 'detectPythonFromBasePath', basePath });
+    };
+
+    const scheduleDetectedPythonPath = () => {
+      if (detectTimer) {
+        clearTimeout(detectTimer);
+      }
+      detectTimer = setTimeout(requestDetectedPythonPath, 200);
+    };
+
+    const refreshReview = () => {
+      const draft = getDraft();
+      byId('summaryText').textContent =
+        'Name: ' + (draft.name || '(empty)') + '\\n' +
+        'Base: ' + (draft.basePath || '(empty)') + '\\n' +
+        'Python strategy: ' + draft.pythonStrategy + '\\n' +
+        'Scenarios root: ' + (draft.scenariosRoot || '(empty)') + '\\n' +
+        'Folders: ' + (draft.scenarioConfigsFolderName || '(empty)') + ' / ' + (draft.scenarioIoFolderName || '(empty)') + '\\n' +
+        'Parsers: ' + draft.outputFilenameParsers.length;
+      byId('jsonPreview').textContent = JSON.stringify(draft, null, 2);
+    };
+
+    const applyInitial = () => {
+      ids.forEach(id => { byId(id).value = initial[id] || ''; });
+      const strategy = initial.pythonStrategy === 'fixedPath' ? 'fixedPath' : 'autoVenv';
+      const radio = document.querySelector('input[name="pythonStrategy"][value="' + strategy + '"]');
+      if (radio) {
+        radio.checked = true;
+      }
+      (initial.outputFilenameParsers || []).forEach(parser => parsersContainer.appendChild(parserTemplate(parser)));
+      updatePythonPathInputState();
+      scheduleDetectedPythonPath();
+      refreshReview();
+    };
+
+    ids.forEach(id => byId(id).addEventListener('input', refreshReview));
+    byId('basePath').addEventListener('input', () => {
+      scheduleDetectedPythonPath();
+    });
+    document.querySelectorAll('input[name="pythonStrategy"]').forEach(el => el.addEventListener('change', () => {
+      updatePythonPathInputState();
+      scheduleDetectedPythonPath();
+      refreshReview();
+    }));
+    byId('addParserBtn').addEventListener('click', () => {
+      parsersContainer.appendChild(parserTemplate());
+      refreshReview();
+    });
+    byId('saveBtn').addEventListener('click', () => {
+      errorsEl.style.display = 'none';
+      vscode.postMessage({ type: 'save', payload: getDraft() });
+    });
+    byId('cancelBtn').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
+
+    window.addEventListener('message', event => {
+      const msg = event.data;
+      if (msg?.type === 'validation' && Array.isArray(msg.errors) && msg.errors.length > 0) {
+        errorsEl.style.display = 'block';
+        errorsEl.textContent = msg.errors.join('\\n');
+        return;
+      }
+
+      if (msg?.type === 'detectedPythonPath' && typeof msg.pythonPath === 'string') {
+        if (readStrategy() === 'autoVenv') {
+          byId('pythonPath').value = msg.pythonPath;
+          refreshReview();
         }
-        return [...new Set(names)];
-    }
+      }
+    });
 
-    for (const match of pattern.matchAll(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)) {
-        names.push(match[1]);
-    }
-    return [...new Set(names)];
+    applyInitial();
+  </script>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+    return value.replace(/[&<>"']/g, char => {
+        switch (char) {
+            case '&':
+                return '&amp;';
+            case '<':
+                return '&lt;';
+            case '>':
+                return '&gt;';
+            case '"':
+                return '&quot;';
+            default:
+                return '&#39;';
+        }
+    });
 }
