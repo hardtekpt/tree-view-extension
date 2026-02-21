@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { DEFAULTS, FOLDER_NAMES } from '../constants';
 import { validateFilenameParser } from '../providers/scenario/filenameMetadata';
 import { existsDir } from '../utils/fileSystem';
+import { asStringArray, asStringRecord, isJsonRecord } from '../utils/json';
 import { OutputFilenameParser, OutputFilenameParserField } from './profileTypes';
 
 const PROFILES_FILE = 'programProfiles.json';
@@ -356,27 +357,26 @@ export class ProfileManager implements vscode.Disposable {
 
         const profilesPath = this.getProfilesPath();
         if (fs.existsSync(profilesPath)) {
-            try {
-                const parsed = JSON.parse(fs.readFileSync(profilesPath, 'utf8')) as Partial<ProfilesFileShape>;
-                for (const profile of parsed.profiles ?? []) {
-                    if (!profile?.id || !profile.basePath) {
-                        continue;
-                    }
-                    this.profiles.set(profile.id, this.normalizeProfile(profile as ProgramProfile));
+            const parsed = this.readJsonFile(profilesPath);
+            const profiles = isJsonRecord(parsed) && Array.isArray(parsed.profiles) ? parsed.profiles : [];
+            for (const entry of profiles) {
+                const normalized = this.normalizeProfileFromUnknown(entry);
+                if (!normalized) {
+                    continue;
                 }
-            } catch {}
+                this.profiles.set(normalized.id, normalized);
+            }
         }
 
         const bindingsPath = this.getBindingsPath();
         if (fs.existsSync(bindingsPath)) {
-            try {
-                const parsed = JSON.parse(fs.readFileSync(bindingsPath, 'utf8')) as Partial<BindingsFileShape>;
-                for (const [workspacePath, profileId] of Object.entries(parsed.bindings ?? {})) {
-                    if (workspacePath && profileId) {
-                        this.workspaceBindings.set(workspacePath, profileId);
-                    }
+            const parsed = this.readJsonFile(bindingsPath);
+            const bindings = isJsonRecord(parsed) ? asStringRecord(parsed.bindings) : {};
+            for (const [workspacePath, profileId] of Object.entries(bindings)) {
+                if (workspacePath) {
+                    this.workspaceBindings.set(workspacePath, profileId);
                 }
-            } catch {}
+            }
         }
     }
 
@@ -390,7 +390,12 @@ export class ProfileManager implements vscode.Disposable {
             version: 1,
             profiles: [...this.profiles.values()]
         };
-        fs.writeFileSync(this.getProfilesPath(), JSON.stringify(payload, null, 2), 'utf8');
+        try {
+            fs.writeFileSync(this.getProfilesPath(), JSON.stringify(payload, null, 2), 'utf8');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Could not persist profiles file: ${message}`);
+        }
     }
 
     private persistBindings(): void {
@@ -398,7 +403,12 @@ export class ProfileManager implements vscode.Disposable {
             version: 1,
             bindings: Object.fromEntries(this.workspaceBindings.entries())
         };
-        fs.writeFileSync(this.getBindingsPath(), JSON.stringify(payload, null, 2), 'utf8');
+        try {
+            fs.writeFileSync(this.getBindingsPath(), JSON.stringify(payload, null, 2), 'utf8');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Could not persist workspace bindings file: ${message}`);
+        }
     }
 
     private getProfilesPath(): string {
@@ -417,6 +427,109 @@ export class ProfileManager implements vscode.Disposable {
                 appliesToKind: parser.appliesToKind ?? 'files'
             }))
         };
+    }
+
+    private normalizeProfileFromUnknown(value: unknown): ProgramProfile | undefined {
+        if (!isJsonRecord(value)) {
+            return undefined;
+        }
+
+        const id = typeof value.id === 'string' ? value.id.trim() : '';
+        const basePath = typeof value.basePath === 'string' ? value.basePath.trim() : '';
+        if (!id || !basePath) {
+            return undefined;
+        }
+
+        const now = Date.now();
+        const profile: ProgramProfile = {
+            id,
+            name: typeof value.name === 'string' && value.name.trim() ? value.name.trim() : id,
+            basePath,
+            pythonStrategy: value.pythonStrategy === 'fixedPath' ? 'fixedPath' : 'autoVenv',
+            pythonPath: typeof value.pythonPath === 'string' && value.pythonPath.trim() ? value.pythonPath.trim() : undefined,
+            scenariosRoot: normalizeRelativeSegment(
+                typeof value.scenariosRoot === 'string' ? value.scenariosRoot : FOLDER_NAMES.scenariosRoot
+            ),
+            scenarioConfigsFolderName: sanitizeFolderName(
+                typeof value.scenarioConfigsFolderName === 'string'
+                    ? value.scenarioConfigsFolderName
+                    : DEFAULTS.scenarioConfigsFolderName
+            ),
+            scenarioIoFolderName: sanitizeFolderName(
+                typeof value.scenarioIoFolderName === 'string'
+                    ? value.scenarioIoFolderName
+                    : DEFAULTS.scenarioIoFolderName
+            ),
+            runCommandTemplate:
+                typeof value.runCommandTemplate === 'string' && value.runCommandTemplate.trim()
+                    ? value.runCommandTemplate.trim()
+                    : DEFAULTS.runCommandTemplate,
+            outputFilenameParsers: this.normalizeOutputFilenameParsers(value.outputFilenameParsers),
+            createdAtMs: typeof value.createdAtMs === 'number' ? value.createdAtMs : now,
+            updatedAtMs: typeof value.updatedAtMs === 'number' ? value.updatedAtMs : now
+        };
+
+        return this.normalizeProfile(profile);
+    }
+
+    private normalizeOutputFilenameParsers(raw: unknown): OutputFilenameParser[] {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+
+        const parsers: OutputFilenameParser[] = [];
+        for (const entry of raw) {
+            if (!isJsonRecord(entry) || typeof entry.id !== 'string' || typeof entry.pattern !== 'string') {
+                continue;
+            }
+
+            const fields: OutputFilenameParserField[] = [];
+            if (Array.isArray(entry.fields)) {
+                for (const rawField of entry.fields) {
+                    if (!isJsonRecord(rawField) || typeof rawField.name !== 'string') {
+                        continue;
+                    }
+                    if (
+                        rawField.type !== 'string' &&
+                        rawField.type !== 'number' &&
+                        rawField.type !== 'enum' &&
+                        rawField.type !== 'datetime'
+                    ) {
+                        continue;
+                    }
+
+                    fields.push({
+                        name: rawField.name,
+                        type: rawField.type,
+                        enumValues: asStringArray(rawField.enumValues)
+                    });
+                }
+            }
+
+            parsers.push({
+                id: entry.id.trim(),
+                pattern: entry.pattern.trim(),
+                fields,
+                appliesTo: asStringArray(entry.appliesTo),
+                appliesToKind: entry.appliesToKind === 'folders' || entry.appliesToKind === 'both' ? entry.appliesToKind : 'files',
+                titleTemplate: typeof entry.titleTemplate === 'string' && entry.titleTemplate.trim()
+                    ? entry.titleTemplate.trim()
+                    : undefined
+            });
+        }
+
+        return parsers;
+    }
+
+    private readJsonFile(filePath: string): unknown {
+        try {
+            const raw = fs.readFileSync(filePath, 'utf8');
+            return JSON.parse(raw);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showWarningMessage(`Could not read '${path.basename(filePath)}': ${message}`);
+            return undefined;
+        }
     }
 
     private async configureFilenameParsers(

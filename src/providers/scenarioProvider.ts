@@ -4,7 +4,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as vscode from 'vscode';
 import {
     getBasePath,
-    getOutputFilenameParsers,
     getPythonCommand,
     getRunCommandTemplate,
     getScenarioConfigsFolderName,
@@ -24,14 +23,30 @@ import {
     renamePathWithFallback,
     safeUpdateConfiguration
 } from './scenario/runtimeUtils';
-import { parseFilenameWithParsers, ParsedFilenameMetadata } from './scenario/filenameMetadata';
 import { createTagId, formatTagChip, normalizeColor, normalizeTag } from './scenario/tagUtils';
 import { findScenarioRoot, matchRunTagFilter, sortEntries } from './scenario/treeUtils';
 import { RunTagDefinition, ScenarioRunSortMode, ScenarioWorkspaceState, SortMode } from './scenario/types';
-
-type DebugRunTarget =
-    | { kind: 'program'; program: string; args: string[] }
-    | { kind: 'module'; module: string; args: string[] };
+import {
+    buildScenarioConfigurationName,
+    createScenarioDebugLaunchConfiguration,
+    DebugRunTarget,
+    SCENARIO_TOOLKIT_DEBUG_ID
+} from './scenario/debugLaunch';
+import { findLastScenarioExecution } from './scenario/lastExecutionFinder';
+import { buildIoFolderTooltip, buildIoRunTooltip, buildScenarioTooltip, formatTagFilter } from './scenario/tooltipBuilder';
+import {
+    OutputMetadataResolver,
+    ParsedOutputFileMetadata,
+    ParsedOutputFolderMetadata
+} from './scenario/outputMetadataResolver';
+import {
+    applyScenarioWorkspaceState,
+    ensureDefaultRunTags,
+    getOrCreateDefaultRunTag,
+    loadScenarioStateFromMemento,
+    persistScenarioTagState,
+    snapshotScenarioWorkspaceState
+} from './scenario/stateStore';
 
 const TERMINAL_COMMAND_DELAY_MS = 300;
 
@@ -49,8 +64,6 @@ interface ScenarioRunContext {
     useSudo: boolean;
 }
 
-const SCENARIO_TOOLKIT_DEBUG_ID = 'scenario-toolkit';
-
 export interface LastExecutionInfo {
     scenarioName: string;
     scenarioPath: string;
@@ -59,18 +72,7 @@ export interface LastExecutionInfo {
     exitCode?: number;
     timestampMs: number;
 }
-
-export interface ParsedOutputFileMetadata extends ParsedFilenameMetadata {
-    filePath: string;
-    relativePath: string;
-    fileName: string;
-}
-
-export interface ParsedOutputFolderMetadata extends ParsedFilenameMetadata {
-    folderPath: string;
-    relativePath: string;
-    folderName: string;
-}
+export type { ParsedOutputFileMetadata, ParsedOutputFolderMetadata };
 
 // Main provider for scenarios, run outputs, and run tagging workflows.
 export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
@@ -91,10 +93,7 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     private globalRunFlags = '';
     private readonly sudoExecutionByScenario = new Map<string, boolean>();
     private lastExecutionInfo?: LastExecutionInfo;
-    private readonly outputMetadataCache = new Map<
-        string,
-        { mtimeMs: number; metadata?: ParsedFilenameMetadata }
-    >();
+    private readonly outputMetadataResolver = new OutputMetadataResolver();
 
     constructor(private readonly state: vscode.Memento) {
         this.loadState();
@@ -108,55 +107,11 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     }
 
     getParsedOutputMetadataForRun(runPath: string): ParsedOutputFileMetadata[] {
-        if (!existsDir(runPath)) {
-            return [];
-        }
-        const parsers = getOutputFilenameParsers();
-        if (parsers.length === 0) {
-            return [];
-        }
-
-        const files = this.listFilesRecursively(runPath);
-        const results: ParsedOutputFileMetadata[] = [];
-        for (const filePath of files) {
-            const metadata = this.getOrParseOutputMetadata(filePath, parsers, 'file');
-            if (!metadata) {
-                continue;
-            }
-            results.push({
-                ...metadata,
-                filePath,
-                fileName: path.basename(filePath),
-                relativePath: path.relative(runPath, filePath)
-            });
-        }
-        return results;
+        return this.outputMetadataResolver.getParsedOutputMetadataForRun(runPath);
     }
 
     getParsedOutputFolderMetadataForRun(runPath: string): ParsedOutputFolderMetadata[] {
-        if (!existsDir(runPath)) {
-            return [];
-        }
-        const parsers = getOutputFilenameParsers();
-        if (parsers.length === 0) {
-            return [];
-        }
-
-        const folders = this.listFoldersRecursively(runPath);
-        const results: ParsedOutputFolderMetadata[] = [];
-        for (const folderPath of folders) {
-            const metadata = this.getOrParseOutputMetadata(folderPath, parsers, 'folder');
-            if (!metadata) {
-                continue;
-            }
-            results.push({
-                ...metadata,
-                folderPath,
-                folderName: path.basename(folderPath),
-                relativePath: path.relative(runPath, folderPath)
-            });
-        }
-        return results;
+        return this.outputMetadataResolver.getParsedOutputFolderMetadataForRun(runPath);
     }
 
     async syncPythonInterpreterForBasePath(): Promise<void> {
@@ -181,69 +136,38 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     // Snapshot current provider state into the workspace JSON payload.
     getWorkspaceState(): ScenarioWorkspaceState {
-        // Serialize provider state into the single workspace configuration snapshot.
-        return {
-            filter: this.filter,
-            scenarioSortMode: this.scenarioSortMode,
-            pinnedScenarios: [...this.pinnedScenarios],
-            pinnedIoRuns: [...this.pinnedIoRuns],
-            runSortByScenario: Object.fromEntries(this.runSortByScenario.entries()),
-            tagCatalog: [...this.tagCatalog.values()],
-            runTagsByPath: Object.fromEntries(this.runTagsByPath.entries()),
-            runFilterTagIdsByScenario: Object.fromEntries(this.runFilterTagIdsByScenario.entries()),
-            globalRunFlags: this.globalRunFlags,
-            sudoExecutionByScenario: Object.fromEntries(this.sudoExecutionByScenario.entries())
-        };
+        return snapshotScenarioWorkspaceState(
+            {
+                pinnedScenarios: this.pinnedScenarios,
+                pinnedIoRuns: this.pinnedIoRuns,
+                runSortByScenario: this.runSortByScenario,
+                tagCatalog: this.tagCatalog,
+                runTagsByPath: this.runTagsByPath,
+                runFilterTagIdsByScenario: this.runFilterTagIdsByScenario,
+                sudoExecutionByScenario: this.sudoExecutionByScenario
+            },
+            {
+                filter: this.filter,
+                scenarioSortMode: this.scenarioSortMode,
+                globalRunFlags: this.globalRunFlags
+            }
+        );
     }
 
     // Apply a previously saved workspace snapshot to in-memory provider state.
     applyWorkspaceState(next: ScenarioWorkspaceState): void {
-        // Rehydrate all provider state from persisted workspace configuration.
-        this.filter = next.filter ?? '';
-        this.scenarioSortMode = next.scenarioSortMode ?? 'name';
-        this.pinnedScenarios.clear();
-        for (const item of next.pinnedScenarios ?? []) {
-            this.pinnedScenarios.add(toPathKey(item));
-        }
-        this.pinnedIoRuns.clear();
-        for (const item of next.pinnedIoRuns ?? []) {
-            this.pinnedIoRuns.add(toPathKey(item));
-        }
-
-        this.runSortByScenario.clear();
-        for (const [key, mode] of Object.entries(next.runSortByScenario ?? {})) {
-            this.runSortByScenario.set(toPathKey(key), mode);
-        }
-        this.tagCatalog.clear();
-        for (const tag of next.tagCatalog ?? []) {
-            if (!tag?.id || !tag.label) {
-                continue;
-            }
-            this.tagCatalog.set(tag.id, normalizeTag(tag));
-        }
-
-        this.runTagsByPath.clear();
-        for (const [runPath, tagIds] of Object.entries(next.runTagsByPath ?? {})) {
-            const filteredIds = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
-            if (filteredIds.length > 0) {
-                this.runTagsByPath.set(toPathKey(runPath), filteredIds);
-            }
-        }
-
-        this.runFilterTagIdsByScenario.clear();
-        for (const [scenarioPath, tagIds] of Object.entries(next.runFilterTagIdsByScenario ?? {})) {
-            const filteredIds = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
-            if (filteredIds.length > 0) {
-                this.runFilterTagIdsByScenario.set(toPathKey(scenarioPath), filteredIds);
-            }
-        }
-        this.globalRunFlags = normalizeRunFlags(next.globalRunFlags ?? '');
-        this.sudoExecutionByScenario.clear();
-        for (const [scenarioPath, enabled] of Object.entries(next.sudoExecutionByScenario ?? {})) {
-            if (enabled) {
-                this.sudoExecutionByScenario.set(toPathKey(scenarioPath), true);
-            }
-        }
+        const scalars = applyScenarioWorkspaceState(next, {
+            pinnedScenarios: this.pinnedScenarios,
+            pinnedIoRuns: this.pinnedIoRuns,
+            runSortByScenario: this.runSortByScenario,
+            tagCatalog: this.tagCatalog,
+            runTagsByPath: this.runTagsByPath,
+            runFilterTagIdsByScenario: this.runFilterTagIdsByScenario,
+            sudoExecutionByScenario: this.sudoExecutionByScenario
+        });
+        this.filter = scalars.filter;
+        this.scenarioSortMode = scalars.scenarioSortMode;
+        this.globalRunFlags = scalars.globalRunFlags;
 
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedScenarios, [...this.pinnedScenarios]);
         void this.state.update(SCENARIO_STORAGE_KEYS.pinnedIoRuns, [...this.pinnedIoRuns]);
@@ -1102,10 +1026,18 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             return undefined;
         }
 
-        const configurationName = `Scenario Toolkit: ${context.scenarioName}`;
+        const configurationName = buildScenarioConfigurationName(context.scenarioName);
         const launchConfig = vscode.workspace.getConfiguration('launch', workspaceFolder.uri);
         const existing = launchConfig.get<vscode.DebugConfiguration[]>('configurations', []);
-        const desired = this.buildScenarioDebugLaunchConfiguration(context, configurationName);
+        const desired = createScenarioDebugLaunchConfiguration({
+            basePath: context.basePath,
+            python: context.python,
+            scenarioName: context.scenarioName,
+            useSudo: context.useSudo,
+            debugTarget: context.invocation.debugTarget,
+            extraArgs: context.extraFlags,
+            configurationName
+        });
 
         const index = existing.findIndex(configuration => {
             const byId = configuration['scenarioToolkitId'] === SCENARIO_TOOLKIT_DEBUG_ID;
@@ -1124,214 +1056,11 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         return { workspaceFolder, configurationName, debugConfiguration: desired };
     }
 
-    private buildScenarioDebugLaunchConfiguration(
-        context: ScenarioRunContext,
-        configurationName: string
-    ): vscode.DebugConfiguration {
-        const args = [...context.invocation.debugTarget.args, ...context.extraFlags];
-        const configuration: vscode.DebugConfiguration = {
-            type: 'debugpy',
-            request: 'launch',
-            name: configurationName,
-            cwd: context.basePath,
-            python: context.python,
-            console: 'integratedTerminal',
-            justMyCode: false,
-            sudo: context.useSudo,
-            scenarioToolkitId: SCENARIO_TOOLKIT_DEBUG_ID,
-            scenarioToolkitScenario: context.scenarioName,
-            scenarioToolkitSudo: context.useSudo
-        };
-
-        if (context.invocation.debugTarget.kind === 'program') {
-            configuration.program = context.invocation.debugTarget.program;
-        } else {
-            configuration.module = context.invocation.debugTarget.module;
-        }
-        configuration.args = args;
-        return configuration;
-    }
-
     private updateLastExecutionFromFilesystem(): void {
-        const nextInfo = this.findLastExecutionFromFilesystem();
+        const scenariosRoot = getScenarioPath();
+        const nextInfo = scenariosRoot ? findLastScenarioExecution(scenariosRoot, getScenarioIoFolderName()) : undefined;
         this.lastExecutionInfo = nextInfo;
         this.lastExecutionEmitter.fire(nextInfo);
-    }
-
-    private findLastExecutionFromFilesystem(): LastExecutionInfo | undefined {
-        const scenariosRoot = getScenarioPath();
-        if (!scenariosRoot) {
-            return undefined;
-        }
-
-        if (!existsDir(scenariosRoot)) {
-            return undefined;
-        }
-
-        const scenarioNames = listEntriesSorted(scenariosRoot).filter(name => existsDir(path.join(scenariosRoot, name)));
-        let newestScenarioName: string | undefined;
-        let newestRunPath: string | undefined;
-        let newestTimestamp = -1;
-
-        for (const scenarioName of scenarioNames) {
-            const scenarioPath = path.join(scenariosRoot, scenarioName);
-            const candidate = this.findLatestRunCandidateForScenario(scenarioPath);
-            if (!candidate) {
-                continue;
-            }
-            if (candidate.timestampMs > newestTimestamp) {
-                newestTimestamp = candidate.timestampMs;
-                newestScenarioName = scenarioName;
-                newestRunPath = candidate.runPath;
-            }
-        }
-
-        if (!newestScenarioName) {
-            return undefined;
-        }
-
-        return {
-            scenarioName: newestScenarioName,
-            scenarioPath: path.join(scenariosRoot, newestScenarioName),
-            runPath: newestRunPath,
-            runName: newestRunPath ? path.basename(newestRunPath) : undefined,
-            timestampMs: newestTimestamp
-        };
-    }
-
-    private findLatestRunCandidateForScenario(
-        scenarioPath: string
-    ): { runPath?: string; timestampMs: number } | undefined {
-        const ioPath = path.join(scenarioPath, getScenarioIoFolderName());
-        if (!existsDir(ioPath)) {
-            return undefined;
-        }
-
-        const latestPath = this.findLatestPathRecursive(ioPath);
-        if (!latestPath) {
-            return undefined;
-        }
-
-        const relative = path.relative(ioPath, latestPath);
-        const runFolder = relative.split(path.sep)[0];
-        if (!runFolder) {
-            return undefined;
-        }
-
-        let stat: fs.Stats;
-        try {
-            stat = fs.statSync(latestPath);
-        } catch {
-            return undefined;
-        }
-
-        return {
-            runPath: path.join(ioPath, runFolder),
-            timestampMs: stat.mtimeMs
-        };
-    }
-
-    private findLatestPathRecursive(rootPath: string): string | undefined {
-        let latestPath: string | undefined;
-        let latestMtime = -1;
-
-        const visit = (currentPath: string): void => {
-            let entries: fs.Dirent[];
-            try {
-                entries = fs.readdirSync(currentPath, { withFileTypes: true });
-            } catch {
-                return;
-            }
-
-            for (const entry of entries) {
-                const entryPath = path.join(currentPath, entry.name);
-                let stat: fs.Stats;
-                try {
-                    stat = fs.statSync(entryPath);
-                } catch {
-                    continue;
-                }
-
-                if (stat.mtimeMs > latestMtime) {
-                    latestMtime = stat.mtimeMs;
-                    latestPath = entryPath;
-                }
-
-                if (entry.isDirectory()) {
-                    visit(entryPath);
-                }
-            }
-        };
-
-        visit(rootPath);
-        return latestPath;
-    }
-
-    private getOrParseOutputMetadata(
-        filePath: string,
-        parsers: ReturnType<typeof getOutputFilenameParsers>,
-        entryType: 'file' | 'folder'
-    ): ParsedFilenameMetadata | undefined {
-        let stat: fs.Stats;
-        try {
-            stat = fs.statSync(filePath);
-        } catch {
-            return undefined;
-        }
-
-        const cacheKey = toPathKey(filePath);
-        const cached = this.outputMetadataCache.get(cacheKey);
-        if (cached && cached.mtimeMs === stat.mtimeMs) {
-            return cached.metadata;
-        }
-
-        const metadata = parseFilenameWithParsers(filePath, parsers, entryType);
-        this.outputMetadataCache.set(cacheKey, { mtimeMs: stat.mtimeMs, metadata });
-        return metadata;
-    }
-
-    private listFilesRecursively(rootPath: string): string[] {
-        const files: string[] = [];
-        const visit = (currentPath: string): void => {
-            let entries: fs.Dirent[];
-            try {
-                entries = fs.readdirSync(currentPath, { withFileTypes: true });
-            } catch {
-                return;
-            }
-            for (const entry of entries) {
-                const entryPath = path.join(currentPath, entry.name);
-                if (entry.isDirectory()) {
-                    visit(entryPath);
-                    continue;
-                }
-                files.push(entryPath);
-            }
-        };
-        visit(rootPath);
-        return files;
-    }
-
-    private listFoldersRecursively(rootPath: string): string[] {
-        const folders: string[] = [];
-        const visit = (currentPath: string): void => {
-            let entries: fs.Dirent[];
-            try {
-                entries = fs.readdirSync(currentPath, { withFileTypes: true });
-            } catch {
-                return;
-            }
-            for (const entry of entries) {
-                if (!entry.isDirectory()) {
-                    continue;
-                }
-                const entryPath = path.join(currentPath, entry.name);
-                folders.push(entryPath);
-                visit(entryPath);
-            }
-        };
-        visit(rootPath);
-        return folders;
     }
 
     // Detect venv interpreter and keep toolkit/python extension settings aligned.
@@ -1578,55 +1307,18 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     }
 
     private loadState(): void {
-        const pinned = this.state.get<string[]>(SCENARIO_STORAGE_KEYS.pinnedScenarios, []);
-        for (const item of pinned) {
-            this.pinnedScenarios.add(toPathKey(item));
-        }
-        const pinnedRuns = this.state.get<string[]>(SCENARIO_STORAGE_KEYS.pinnedIoRuns, []);
-        for (const item of pinnedRuns) {
-            this.pinnedIoRuns.add(toPathKey(item));
-        }
-        const catalog = this.state.get<RunTagDefinition[]>(SCENARIO_STORAGE_KEYS.tagCatalog, []);
-        for (const tag of catalog) {
-            if (!tag?.id || !tag.label) {
-                continue;
-            }
-            this.tagCatalog.set(tag.id, normalizeTag(tag));
-        }
-        const runTags = this.state.get<Record<string, string[]>>(SCENARIO_STORAGE_KEYS.runTagsByPath, {});
-        for (const [runPath, tagIds] of Object.entries(runTags)) {
-            const ids = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
-            if (ids.length > 0) {
-                this.runTagsByPath.set(toPathKey(runPath), ids);
-            }
-        }
-        const filterByScenario = this.state.get<Record<string, string[]>>(
-            SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
-            {}
-        );
-        for (const [scenarioPath, tagIds] of Object.entries(filterByScenario)) {
-            const filteredIds = (tagIds ?? []).filter(tagId => this.tagCatalog.has(tagId));
-            if (filteredIds.length > 0) {
-                this.runFilterTagIdsByScenario.set(toPathKey(scenarioPath), filteredIds);
-            }
-        }
-        this.globalRunFlags = normalizeRunFlags(this.state.get<string>(SCENARIO_STORAGE_KEYS.globalRunFlags, ''));
-        const sudoByScenario = this.state.get<Record<string, boolean>>(SCENARIO_STORAGE_KEYS.sudoExecutionByScenario, {});
-        this.sudoExecutionByScenario.clear();
-        for (const [scenarioPath, enabled] of Object.entries(sudoByScenario)) {
-            if (enabled) {
-                this.sudoExecutionByScenario.set(toPathKey(scenarioPath), true);
-            }
-        }
-
-        this.scenarioSortMode = this.state.get<SortMode>(SCENARIO_STORAGE_KEYS.scenarioSort, 'name');
-        const byScenario = this.state.get<Record<string, ScenarioRunSortMode>>(
-            SCENARIO_STORAGE_KEYS.runSortByScenario,
-            {}
-        );
-        for (const [key, mode] of Object.entries(byScenario)) {
-            this.runSortByScenario.set(toPathKey(key), mode);
-        }
+        const scalars = loadScenarioStateFromMemento(this.state, {
+            pinnedScenarios: this.pinnedScenarios,
+            pinnedIoRuns: this.pinnedIoRuns,
+            runSortByScenario: this.runSortByScenario,
+            tagCatalog: this.tagCatalog,
+            runTagsByPath: this.runTagsByPath,
+            runFilterTagIdsByScenario: this.runFilterTagIdsByScenario,
+            sudoExecutionByScenario: this.sudoExecutionByScenario
+        });
+        this.filter = scalars.filter;
+        this.scenarioSortMode = scalars.scenarioSortMode;
+        this.globalRunFlags = scalars.globalRunFlags;
     }
 
     private applyScenarioHover(node: ScenarioNode): void {
@@ -1638,15 +1330,15 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
 
-        node.tooltip = this.buildTooltipTable('Scenario Details', [
-            ['Scenario', scenarioName],
-            ['Sudo', sudoEnabled ? 'Enabled' : 'Disabled'],
-            ['Run flags', runFlags],
-            ['Scenario filter', scenarioFilter],
-            ['Scenario sort', this.formatSortMode(this.scenarioSortMode)],
-            ['Run sort', this.formatSortMode(runSortMode)],
-            ['Run tag filter', activeRunTagFilter]
-        ]);
+        node.tooltip = buildScenarioTooltip({
+            scenarioName,
+            sudoEnabled,
+            runFlags,
+            scenarioFilter,
+            scenarioSortMode: this.scenarioSortMode,
+            runSortMode,
+            activeRunTagFilter
+        });
     }
 
     private applyIoFolderHover(node: ScenarioNode): void {
@@ -1656,14 +1348,14 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const activeRunTagFilter = this.formatTagFilterForScenario(scenarioPath);
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
 
-        node.tooltip = this.buildTooltipTable('Output Folder Details', [
-            ['Scenario', scenarioName],
-            ['Folder', getScenarioIoFolderName()],
-            ['Run sort', this.formatSortMode(runSortMode)],
-            ['Run tag filter', activeRunTagFilter],
-            ['Sudo', this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'],
-            ['Run flags', runFlags]
-        ]);
+        node.tooltip = buildIoFolderTooltip({
+            scenarioName,
+            folderName: getScenarioIoFolderName(),
+            runSortMode,
+            activeRunTagFilter,
+            sudoEnabled: this.isSudoEnabledForScenario(scenarioPath),
+            runFlags
+        });
     }
 
     private applyIoRunDetails(node: ScenarioNode, scenarioPath: string): void {
@@ -1680,61 +1372,29 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
         const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'recent';
         const runFlags = this.globalRunFlags ? this.globalRunFlags : 'None';
-        node.tooltip = this.buildTooltipTable('Output Run Details', [
-            ['Run', runName],
-            ['Scenario', scenarioName],
-            ['Tags', tags.length > 0 ? tags.map(tag => tag.label).join(', ') : 'None'],
-            ['Active run tag filter', this.formatTagFilterForScenario(scenarioPath)],
-            ['Sudo', this.isSudoEnabledForScenario(scenarioPath) ? 'Enabled' : 'Disabled'],
-            ['Run flags', runFlags],
-            ['Run sort', this.formatSortMode(runSortMode)],
-            ['Scenario filter', this.filter ? this.filter : 'None']
-        ]);
-    }
-
-    private buildTooltipTable(title: string, rows: ReadonlyArray<readonly [string, string]>): vscode.MarkdownString {
-        const body = rows
-            .map(([field, value]) => `| ${this.escapeMarkdownTableCell(field)} | ${this.escapeMarkdownTableCell(value)} |`)
-            .join('\n');
-        const markdown = new vscode.MarkdownString(
-            `### ${this.escapeMarkdownHeading(title)}\n\n| Field | Value |\n| --- | --- |\n${body}`,
-            true
-        );
-        markdown.isTrusted = false;
-        return markdown;
-    }
-
-    private escapeMarkdownHeading(value: string): string {
-        return value.replace(/\r?\n/g, ' ').trim();
-    }
-
-    private escapeMarkdownTableCell(value: string): string {
-        return value.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+        node.tooltip = buildIoRunTooltip({
+            runName,
+            scenarioName,
+            tags,
+            activeRunTagFilter: this.formatTagFilterForScenario(scenarioPath),
+            sudoEnabled: this.isSudoEnabledForScenario(scenarioPath),
+            runFlags,
+            runSortMode,
+            scenarioFilter: this.filter ? this.filter : 'None'
+        });
     }
 
     private formatTagFilterForScenario(scenarioPath: string): string {
         const selectedIds = this.runFilterTagIdsByScenario.get(toPathKey(scenarioPath)) ?? [];
-        if (selectedIds.length === 0) {
-            return 'None';
-        }
-
-        const labels = selectedIds
-            .map(tagId => this.tagCatalog.get(tagId)?.label)
-            .filter((label): label is string => Boolean(label));
-        return labels.length > 0 ? labels.join(', ') : 'None';
-    }
-
-    private formatSortMode(mode: SortMode | ScenarioRunSortMode): string {
-        return mode === 'recent' ? 'Most recent' : 'Name';
+        return formatTagFilter(selectedIds, this.tagCatalog);
     }
 
     private persistTagState(): void {
-        void this.state.update(SCENARIO_STORAGE_KEYS.tagCatalog, [...this.tagCatalog.values()]);
-        void this.state.update(SCENARIO_STORAGE_KEYS.runTagsByPath, Object.fromEntries(this.runTagsByPath.entries()));
-        void this.state.update(
-            SCENARIO_STORAGE_KEYS.runFilterTagIdsByScenario,
-            Object.fromEntries(this.runFilterTagIdsByScenario.entries())
-        );
+        persistScenarioTagState(this.state, {
+            tagCatalog: this.tagCatalog,
+            runTagsByPath: this.runTagsByPath,
+            runFilterTagIdsByScenario: this.runFilterTagIdsByScenario
+        });
     }
 
     private async pickTag(placeHolder: string): Promise<RunTagDefinition | undefined> {
@@ -1761,46 +1421,17 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
     }
 
     private ensureDefaultTags(): void {
-        const defaults: Array<Omit<RunTagDefinition, 'id'>> = [
-            { label: 'success', color: '#4CAF50', icon: 'check' },
-            { label: 'failed', color: '#F44336', icon: 'error' },
-            { label: 'reviewed', color: '#2196F3', icon: 'eye' }
-        ];
-
-        let changed = false;
-        for (const definition of defaults) {
-            const exists = [...this.tagCatalog.values()].some(
-                tag => tag.label.toLowerCase() === definition.label.toLowerCase()
-            );
-            if (exists) {
-                continue;
-            }
-
-            const id = createTagId(definition.label, this.tagCatalog);
-            this.tagCatalog.set(id, normalizeTag({ id, ...definition }));
-            changed = true;
-        }
-
-        if (changed) {
+        if (ensureDefaultRunTags({ tagCatalog: this.tagCatalog })) {
             this.persistTagState();
         }
     }
 
     private getOrCreateDefaultTag(tagLabel: 'success' | 'failed'): RunTagDefinition | undefined {
-        const existing = [...this.tagCatalog.values()].find(tag => tag.label.toLowerCase() === tagLabel);
-        if (existing) {
-            return existing;
+        const existingCount = this.tagCatalog.size;
+        const tag = getOrCreateDefaultRunTag(tagLabel, { tagCatalog: this.tagCatalog });
+        if (this.tagCatalog.size > existingCount) {
+            this.persistTagState();
         }
-
-        const definition =
-            tagLabel === 'success'
-                ? { label: 'success', color: '#4CAF50', icon: 'check' }
-                : { label: 'failed', color: '#F44336', icon: 'error' };
-
-        const id = createTagId(definition.label, this.tagCatalog);
-        const tag = normalizeTag({ id, ...definition });
-        this.tagCatalog.set(id, tag);
-        this.persistTagState();
         return tag;
     }
 

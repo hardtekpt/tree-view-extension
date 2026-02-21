@@ -101,14 +101,17 @@ export class SrcProvider implements vscode.TreeDataProvider<SrcNode>, vscode.Tre
             try {
                 fs.renameSync(sourcePath, destinationPath);
             } catch (error) {
-                const code = typeof error === 'object' && error && 'code' in error
-                    ? String((error as { code?: unknown }).code ?? '')
-                    : '';
+                const code = getErrorCode(error);
 
                 // Cross-device fallback.
                 if (code === 'EXDEV') {
-                    fs.cpSync(sourcePath, destinationPath, { recursive: true });
-                    fs.rmSync(sourcePath, { recursive: true, force: true });
+                    try {
+                        fs.cpSync(sourcePath, destinationPath, { recursive: true });
+                        fs.rmSync(sourcePath, { recursive: true, force: true });
+                    } catch (copyError) {
+                        const message = copyError instanceof Error ? copyError.message : String(copyError);
+                        void vscode.window.showErrorMessage(`Move failed: ${message}`);
+                    }
                 } else {
                     const message = error instanceof Error ? error.message : String(error);
                     void vscode.window.showErrorMessage(`Move failed: ${message}`);
@@ -131,12 +134,15 @@ export class SrcProvider implements vscode.TreeDataProvider<SrcNode>, vscode.Tre
         const custom = dataTransfer.get(SRC_MIME);
         if (custom) {
             try {
-                const raw = JSON.parse(await custom.asString());
+                const raw: unknown = JSON.parse(await custom.asString());
                 if (Array.isArray(raw)) {
-                    return raw.map((entry: string) => vscode.Uri.parse(entry));
+                    return raw
+                        .filter((entry): entry is string => typeof entry === 'string')
+                        .map(entry => vscode.Uri.parse(entry));
                 }
-            } catch {
-                return [];
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                void vscode.window.showWarningMessage(`Could not parse dropped data: ${message}`);
             }
         }
 
@@ -149,6 +155,21 @@ export class SrcProvider implements vscode.TreeDataProvider<SrcNode>, vscode.Tre
             .split(/\r?\n/)
             .map(line => line.trim())
             .filter(line => line.length > 0 && !line.startsWith('#'))
-            .map(line => vscode.Uri.parse(line));
+            .map(line => {
+                try {
+                    return vscode.Uri.parse(line);
+                } catch {
+                    return undefined;
+                }
+            })
+            .filter((uri): uri is vscode.Uri => Boolean(uri));
     }
+}
+
+function getErrorCode(error: unknown): string | undefined {
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+        const code = (error as { code?: unknown }).code;
+        return typeof code === 'string' ? code : undefined;
+    }
+    return undefined;
 }

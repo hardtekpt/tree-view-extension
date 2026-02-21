@@ -6,6 +6,7 @@ import { STORAGE_KEYS } from '../constants';
 import { DevProvider } from '../providers/devProvider';
 import { ScenarioProvider } from '../providers/scenarioProvider';
 import { ScenarioWorkspaceState } from '../providers/scenario/types';
+import { asBoolean, asBooleanRecord, asStringArray, isJsonRecord, JsonRecord } from '../utils/json';
 import { ComponentViewWorkspaceState, TreeViewWorkspaceState } from './treeViewState';
 import {
     getDefaultWorkspaceConfigPath,
@@ -60,7 +61,7 @@ export class WorkspaceManager {
         const targetPath = this.resolveActiveWorkspacePath();
         if (targetPath) {
             await this.setActiveWorkspaceConfigPath(targetPath);
-            this.writeWorkspaceConfig(targetPath, this.createCurrentConfig());
+            this.writeWorkspaceConfigOrThrow(targetPath, this.createCurrentConfig());
         }
 
         void vscode.window.showInformationMessage('Workspace configuration has been reset.');
@@ -72,7 +73,12 @@ export class WorkspaceManager {
             return;
         }
 
-        this.writeWorkspaceConfig(targetPath, this.createCurrentConfig());
+        try {
+            this.writeWorkspaceConfigOrThrow(targetPath, this.createCurrentConfig());
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Could not persist workspace configuration: ${message}`);
+        }
     }
 
     private async saveWithPicker(): Promise<void> {
@@ -82,7 +88,7 @@ export class WorkspaceManager {
             return;
         }
 
-        this.writeWorkspaceConfig(selected.fsPath, this.createCurrentConfig());
+        this.writeWorkspaceConfigOrThrow(selected.fsPath, this.createCurrentConfig());
         await this.setActiveWorkspaceConfigPath(selected.fsPath);
         void vscode.window.showInformationMessage(`Workspace configuration saved to ${selected.fsPath}`);
     }
@@ -115,7 +121,7 @@ export class WorkspaceManager {
             return;
         }
 
-        this.writeWorkspaceConfig(defaultWorkspacePath, this.createCurrentConfig());
+        this.writeWorkspaceConfigOrThrow(defaultWorkspacePath, this.createCurrentConfig());
         await this.setActiveWorkspaceConfigPath(defaultWorkspacePath);
     }
 
@@ -145,7 +151,8 @@ export class WorkspaceManager {
 
     private readWorkspaceConfig(workspacePath: string): Partial<ToolkitWorkspaceConfig> {
         const raw = fs.readFileSync(workspacePath, 'utf8');
-        return JSON.parse(raw) as Partial<ToolkitWorkspaceConfig>;
+        const parsed: unknown = JSON.parse(raw);
+        return isJsonRecord(parsed) ? parsed as Partial<ToolkitWorkspaceConfig> : {};
     }
 
     private async applyConfig(parsed: Partial<ToolkitWorkspaceConfig>): Promise<void> {
@@ -155,32 +162,45 @@ export class WorkspaceManager {
     }
 
     private normalizeScenarioState(state: Partial<ScenarioWorkspaceState> | undefined): ScenarioWorkspaceState {
+        const raw = isJsonRecord(state) ? state : {};
         return {
-            filter: state?.filter ?? '',
-            scenarioSortMode: state?.scenarioSortMode ?? 'name',
-            pinnedScenarios: state?.pinnedScenarios ?? [],
-            pinnedIoRuns: state?.pinnedIoRuns ?? [],
-            runSortByScenario: state?.runSortByScenario ?? {},
-            tagCatalog: state?.tagCatalog ?? [],
-            runTagsByPath: state?.runTagsByPath ?? {},
-            runFilterTagIdsByScenario: state?.runFilterTagIdsByScenario ?? {},
-            globalRunFlags: state?.globalRunFlags ?? '',
-            sudoExecutionByScenario: state?.sudoExecutionByScenario ?? {}
+            filter: typeof raw.filter === 'string' ? raw.filter : '',
+            scenarioSortMode: raw.scenarioSortMode === 'recent' ? 'recent' : 'name',
+            pinnedScenarios: asStringArray(raw.pinnedScenarios),
+            pinnedIoRuns: asStringArray(raw.pinnedIoRuns),
+            runSortByScenario: this.normalizeRunSortByScenario(raw.runSortByScenario),
+            tagCatalog: this.normalizeTagCatalog(raw.tagCatalog),
+            runTagsByPath: this.normalizeStringArrayMap(raw.runTagsByPath),
+            runFilterTagIdsByScenario: this.normalizeStringArrayMap(raw.runFilterTagIdsByScenario),
+            globalRunFlags: typeof raw.globalRunFlags === 'string' ? raw.globalRunFlags : '',
+            sudoExecutionByScenario: asBooleanRecord(raw.sudoExecutionByScenario)
         };
     }
 
     private normalizeTreeViewState(state: Partial<TreeViewWorkspaceState> | undefined): TreeViewWorkspaceState {
+        const raw = isJsonRecord(state) ? state : {};
+        const componentViewsRaw: JsonRecord = isJsonRecord(raw.componentViews) ? raw.componentViews : {};
         return {
-            srcExplorerExpanded: state?.srcExplorerExpanded ?? [],
-            scenarioExplorerExpanded: state?.scenarioExplorerExpanded ?? [],
+            srcExplorerExpanded: asStringArray(raw.srcExplorerExpanded),
+            scenarioExplorerExpanded: asStringArray(raw.scenarioExplorerExpanded),
             componentViews: {
-                devAreaVisible: state?.componentViews?.devAreaVisible ?? DEFAULT_COMPONENT_VIEWS.devAreaVisible,
-                srcExplorerVisible: state?.componentViews?.srcExplorerVisible ?? DEFAULT_COMPONENT_VIEWS.srcExplorerVisible,
-                scenarioExplorerVisible:
-                    state?.componentViews?.scenarioExplorerVisible ?? DEFAULT_COMPONENT_VIEWS.scenarioExplorerVisible,
-                programInfoVisible: state?.componentViews?.programInfoVisible ?? DEFAULT_COMPONENT_VIEWS.programInfoVisible,
-                configInspectorVisible:
-                    state?.componentViews?.configInspectorVisible ?? DEFAULT_COMPONENT_VIEWS.configInspectorVisible
+                devAreaVisible: asBoolean(componentViewsRaw.devAreaVisible, DEFAULT_COMPONENT_VIEWS.devAreaVisible),
+                srcExplorerVisible: asBoolean(
+                    componentViewsRaw.srcExplorerVisible,
+                    DEFAULT_COMPONENT_VIEWS.srcExplorerVisible
+                ),
+                scenarioExplorerVisible: asBoolean(
+                    componentViewsRaw.scenarioExplorerVisible,
+                    DEFAULT_COMPONENT_VIEWS.scenarioExplorerVisible
+                ),
+                programInfoVisible: asBoolean(
+                    componentViewsRaw.programInfoVisible,
+                    DEFAULT_COMPONENT_VIEWS.programInfoVisible
+                ),
+                configInspectorVisible: asBoolean(
+                    componentViewsRaw.configInspectorVisible,
+                    DEFAULT_COMPONENT_VIEWS.configInspectorVisible
+                )
             }
         };
     }
@@ -217,7 +237,7 @@ export class WorkspaceManager {
         };
     }
 
-    private writeWorkspaceConfig(workspacePath: string, config: ToolkitWorkspaceConfig): void {
+    private writeWorkspaceConfigOrThrow(workspacePath: string, config: ToolkitWorkspaceConfig): void {
         fs.mkdirSync(path.dirname(workspacePath), { recursive: true });
         fs.writeFileSync(workspacePath, JSON.stringify(config, null, 2));
     }
@@ -240,7 +260,7 @@ export class WorkspaceManager {
         }
 
         if (!fs.existsSync(defaultWorkspacePath)) {
-            this.writeWorkspaceConfig(defaultWorkspacePath, this.createCurrentConfig());
+            this.writeWorkspaceConfigOrThrow(defaultWorkspacePath, this.createCurrentConfig());
         }
 
         this.activeWorkspaceConfigPath = defaultWorkspacePath;
@@ -260,5 +280,59 @@ export class WorkspaceManager {
     private async setActiveWorkspaceConfigPath(workspacePath: string): Promise<void> {
         this.activeWorkspaceConfigPath = workspacePath;
         await this.state.update(STORAGE_KEYS.lastWorkspaceConfigPath, workspacePath);
+    }
+
+    private normalizeRunSortByScenario(raw: unknown): ScenarioWorkspaceState['runSortByScenario'] {
+        if (!isJsonRecord(raw)) {
+            return {};
+        }
+
+        const result: ScenarioWorkspaceState['runSortByScenario'] = {};
+        for (const [scenarioPath, mode] of Object.entries(raw)) {
+            result[scenarioPath] = mode === 'recent' ? 'recent' : 'name';
+        }
+        return result;
+    }
+
+    private normalizeTagCatalog(raw: unknown): ScenarioWorkspaceState['tagCatalog'] {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+
+        const tags: ScenarioWorkspaceState['tagCatalog'] = [];
+        for (const entry of raw) {
+            if (
+                isJsonRecord(entry) &&
+                typeof entry.id === 'string' &&
+                typeof entry.label === 'string' &&
+                typeof entry.color === 'string' &&
+                (entry.icon === undefined || typeof entry.icon === 'string') &&
+                (entry.description === undefined || typeof entry.description === 'string')
+            ) {
+                tags.push({
+                    id: entry.id,
+                    label: entry.label,
+                    color: entry.color,
+                    icon: entry.icon,
+                    description: entry.description
+                });
+            }
+        }
+        return tags;
+    }
+
+    private normalizeStringArrayMap(raw: unknown): Record<string, string[]> {
+        if (!isJsonRecord(raw)) {
+            return {};
+        }
+
+        const result: Record<string, string[]> = {};
+        for (const [key, values] of Object.entries(raw)) {
+            const normalized = asStringArray(values);
+            if (normalized.length > 0) {
+                result[key] = normalized;
+            }
+        }
+        return result;
     }
 }

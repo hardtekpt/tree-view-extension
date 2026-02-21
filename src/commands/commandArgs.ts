@@ -15,7 +15,7 @@ export function asUri(value: MaybeUriArg): vscode.Uri | undefined {
         return value;
     }
 
-    return value.uri;
+    return value.uri instanceof vscode.Uri ? value.uri : undefined;
 }
 
 // Preserve optional metadata required by scenario-specific actions.
@@ -26,6 +26,10 @@ export function asNodeArg(value: MaybeNodeArg): NodeArg | undefined {
 
     if (value instanceof vscode.Uri) {
         return { uri: value };
+    }
+
+    if (!(value.uri instanceof vscode.Uri)) {
+        return undefined;
     }
 
     return { uri: value.uri, scenarioRootPath: value.scenarioRootPath, type: value.type };

@@ -17,9 +17,15 @@ export function getDefaultWorkspaceConfigPath(basePath: string): string {
 export async function getInitialWorkspaceUri(): Promise<vscode.Uri | undefined> {
     const basePath = getBasePath();
     if (basePath) {
-        const dir = path.join(basePath, FOLDER_NAMES.toolkitStateDir);
-        fs.mkdirSync(dir, { recursive: true });
-        return vscode.Uri.file(path.join(dir, FILE_NAMES.workspaceConfig));
+        try {
+            const dir = path.join(basePath, FOLDER_NAMES.toolkitStateDir);
+            fs.mkdirSync(dir, { recursive: true });
+            return vscode.Uri.file(path.join(dir, FILE_NAMES.workspaceConfig));
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showWarningMessage(`Could not initialize workspace config folder: ${message}`);
+            return undefined;
+        }
     }
 
     const firstWorkspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;

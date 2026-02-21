@@ -156,6 +156,15 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     };
 
+    const runWithErrorHandling = async (action: () => Promise<void>, failurePrefix: string): Promise<void> => {
+        try {
+            await action();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`${failurePrefix}: ${message}`);
+        }
+    };
+
     const reinitializeWorkspaceState = async (): Promise<void> => {
         isWorkspaceInitializationComplete = false;
         await runWorkspaceStateOperation(() => workspaceManager.initialize());
@@ -240,20 +249,19 @@ export function activate(context: vscode.ExtensionContext): void {
             scheduleDefaultWorkspaceSave();
         }),
         profileManager.onDidChangeActiveProfile(() => {
-            void (async () => {
+            void runWithErrorHandling(async () => {
                 syncPythonInterpreter();
                 await reinitializeWorkspaceState();
                 refreshToolkit();
-            })();
+            }, 'Could not reload extension state after profile change');
         }),
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
-            void profileManager.handleWorkspaceFoldersChanged().then(() => {
-                void (async () => {
-                    syncPythonInterpreter();
-                    await reinitializeWorkspaceState();
-                    refreshToolkit();
-                })();
-            });
+            void runWithErrorHandling(async () => {
+                await profileManager.handleWorkspaceFoldersChanged();
+                syncPythonInterpreter();
+                await reinitializeWorkspaceState();
+                refreshToolkit();
+            }, 'Could not reload extension state after workspace-folder change');
         })
     );
 
@@ -275,11 +283,12 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    void profileManager.initialize().then(async () => {
+    void runWithErrorHandling(async () => {
+        await profileManager.initialize();
         syncPythonInterpreter();
         await reinitializeWorkspaceState();
         refreshToolkit();
-    });
+    }, 'Could not initialize extension state');
 }
 
 export function deactivate(): void {}
