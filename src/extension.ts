@@ -27,6 +27,7 @@ export function activate(context: vscode.ExtensionContext): void {
     let isApplyingTreeViewState = false;
     let isWorkspaceInitializationComplete = false;
     let isWorkspaceStateOperationInProgress = false;
+    let isEnsuringProfileForVisibleToolkit = false;
 
     const devTree = vscode.window.createTreeView(VIEW_IDS.devArea, {
         treeDataProvider: devProvider,
@@ -68,6 +69,13 @@ export function activate(context: vscode.ExtensionContext): void {
         scenarioExplorerExpanded: [...scenarioExpanded],
         componentViews: { ...componentViewsState }
     });
+
+    const isToolkitContainerVisible = (state: ComponentViewWorkspaceState): boolean =>
+        state.devAreaVisible ||
+        state.srcExplorerVisible ||
+        state.scenarioExplorerVisible ||
+        state.programInfoVisible ||
+        state.configInspectorVisible;
 
     const applyTreeViewState = async (state: TreeViewWorkspaceState): Promise<void> => {
         isApplyingTreeViewState = true;
@@ -202,6 +210,45 @@ export function activate(context: vscode.ExtensionContext): void {
         });
     };
 
+    const ensureProfilePromptForVisibleToolkit = () => {
+        if (!isWorkspaceInitializationComplete || isWorkspaceStateOperationInProgress) {
+            return;
+        }
+        if (
+            !devTree.visible &&
+            !srcTree.visible &&
+            !scenarioTree.visible &&
+            !programInfoTree.visible &&
+            !configInspectorProvider.isVisible()
+        ) {
+            return;
+        }
+        if (isEnsuringProfileForVisibleToolkit) {
+            return;
+        }
+
+        isEnsuringProfileForVisibleToolkit = true;
+        void runWithErrorHandling(async () => {
+            const previousProfileId = profileManager.getActiveProfile()?.id;
+            await profileManager.promptToCreateProfileIfMissing();
+            const currentProfileId = profileManager.getActiveProfile()?.id;
+            if (previousProfileId !== currentProfileId) {
+                syncPythonInterpreter();
+                await reinitializeWorkspaceState();
+                refreshToolkit();
+            }
+        }, 'Could not initialize profile after opening Toolkit view').finally(() => {
+            isEnsuringProfileForVisibleToolkit = false;
+        });
+    };
+
+    const maybePromptWhenToolkitContainerOpens = (previousState: ComponentViewWorkspaceState) => {
+        if (isToolkitContainerVisible(previousState) || !isToolkitContainerVisible(componentViewsState)) {
+            return;
+        }
+        ensureProfilePromptForVisibleToolkit();
+    };
+
     programInfoProvider.refresh();
 
     const saveWorkspace = () => {
@@ -245,7 +292,9 @@ export function activate(context: vscode.ExtensionContext): void {
         scenarioTree.onDidChangeVisibility(() => scheduleDefaultWorkspaceSave()),
         programInfoTree.onDidChangeVisibility(() => scheduleDefaultWorkspaceSave()),
         configInspectorProvider.onDidChangeVisibility(visible => {
+            const previousState = { ...componentViewsState };
             componentViewsState.configInspectorVisible = visible;
+            maybePromptWhenToolkitContainerOpens(previousState);
             scheduleDefaultWorkspaceSave();
         }),
         profileManager.onDidChangeActiveProfile(() => {
@@ -267,19 +316,27 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         devTree.onDidChangeVisibility(() => {
+            const previousState = { ...componentViewsState };
             componentViewsState.devAreaVisible = devTree.visible;
+            maybePromptWhenToolkitContainerOpens(previousState);
         }),
         srcTree.onDidChangeVisibility(() => {
+            const previousState = { ...componentViewsState };
             componentViewsState.srcExplorerVisible = srcTree.visible;
+            maybePromptWhenToolkitContainerOpens(previousState);
             if (!srcTree.visible) {
                 srcExpanded.clear();
             }
         }),
         scenarioTree.onDidChangeVisibility(() => {
+            const previousState = { ...componentViewsState };
             componentViewsState.scenarioExplorerVisible = scenarioTree.visible;
+            maybePromptWhenToolkitContainerOpens(previousState);
         }),
         programInfoTree.onDidChangeVisibility(() => {
+            const previousState = { ...componentViewsState };
             componentViewsState.programInfoVisible = programInfoTree.visible;
+            maybePromptWhenToolkitContainerOpens(previousState);
         })
     );
 

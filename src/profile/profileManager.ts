@@ -71,13 +71,14 @@ export class ProfileManager implements vscode.Disposable {
     private readonly workspaceBindings = new Map<string, string>();
     private activeProfile?: ProgramProfile;
     private initialized = false;
+    private isPromptingForMissingProfile = false;
 
     constructor(private readonly context: vscode.ExtensionContext) {}
 
     async initialize(): Promise<void> {
         await this.ensureStorage();
         this.load();
-        await this.resolveActiveProfile();
+        await this.resolveActiveProfile(false);
         this.initialized = true;
         this.changeEmitter.fire();
     }
@@ -91,8 +92,24 @@ export class ProfileManager implements vscode.Disposable {
     }
 
     async handleWorkspaceFoldersChanged(): Promise<void> {
-        await this.resolveActiveProfile();
+        await this.resolveActiveProfile(false);
         this.changeEmitter.fire();
+    }
+
+    async promptToCreateProfileIfMissing(): Promise<void> {
+        if (this.isPromptingForMissingProfile) {
+            return;
+        }
+        this.isPromptingForMissingProfile = true;
+        try {
+            const previousProfileId = this.activeProfile?.id;
+            await this.resolveActiveProfile(true);
+            if (this.activeProfile?.id !== previousProfileId) {
+                this.changeEmitter.fire();
+            }
+        } finally {
+            this.isPromptingForMissingProfile = false;
+        }
     }
 
     async createProfileForCurrentWorkspace(): Promise<void> {
@@ -194,7 +211,7 @@ export class ProfileManager implements vscode.Disposable {
         return vscode.Uri.joinPath(this.context.globalStorageUri, BINDINGS_FILE);
     }
 
-    private async resolveActiveProfile(): Promise<void> {
+    private async resolveActiveProfile(promptIfMissing: boolean): Promise<void> {
         const workspacePath = this.getCurrentWorkspacePath();
         if (!workspacePath) {
             this.activeProfile = undefined;
@@ -211,7 +228,9 @@ export class ProfileManager implements vscode.Disposable {
         }
 
         this.activeProfile = undefined;
-        await this.promptToCreateProfileForWorkspace(workspacePath);
+        if (promptIfMissing) {
+            await this.promptToCreateProfileForWorkspace(workspacePath);
+        }
     }
 
     private async promptToCreateProfileForWorkspace(workspacePath: string): Promise<void> {

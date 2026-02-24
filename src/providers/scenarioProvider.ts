@@ -1366,8 +1366,16 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
         const tags = tagIds
             .map(tagId => this.tagCatalog.get(tagId))
             .filter((tag): tag is RunTagDefinition => Boolean(tag));
+        const descriptionParts: string[] = [];
+        const createdAtLabel = this.formatRunCreatedAtDescription(node.uri.fsPath);
+        if (createdAtLabel) {
+            descriptionParts.push(createdAtLabel);
+        }
         if (tags.length > 0) {
-            node.description = tags.map(tag => formatTagChip(tag)).join(' ');
+            descriptionParts.push(tags.map(tag => formatTagChip(tag)).join(' '));
+        }
+        if (descriptionParts.length > 0) {
+            node.description = descriptionParts.join('  ');
         }
 
         const runSortMode = this.runSortByScenario.get(toPathKey(scenarioPath)) ?? 'recent';
@@ -1382,6 +1390,32 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
             runSortMode,
             scenarioFilter: this.filter ? this.filter : 'None'
         });
+    }
+
+    private formatRunCreatedAtDescription(runPath: string): string | undefined {
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(runPath);
+        } catch {
+            return undefined;
+        }
+
+        const createdAtMs = Number.isFinite(stat.birthtimeMs) && stat.birthtimeMs > 0
+            ? stat.birthtimeMs
+            : Number.isFinite(stat.ctimeMs) && stat.ctimeMs > 0
+                ? stat.ctimeMs
+                : stat.mtimeMs;
+        if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+            return undefined;
+        }
+
+        return new Intl.DateTimeFormat('en-US', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).format(new Date(createdAtMs)).replace(',', '');
     }
 
     private formatTagFilterForScenario(scenarioPath: string): string {
