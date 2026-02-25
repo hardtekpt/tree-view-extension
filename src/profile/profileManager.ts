@@ -10,6 +10,8 @@ import { OutputFilenameParser, OutputFilenameParserField } from './profileTypes'
 
 const PROFILES_FILE = 'programProfiles.json';
 const BINDINGS_FILE = 'workspaceBindings.json';
+const LEGACY_PROFILES_FILES = ['profiles.json'];
+const LEGACY_BINDINGS_FILES = ['bindings.json'];
 
 type PythonStrategy = 'autoVenv' | 'fixedPath';
 
@@ -78,6 +80,7 @@ export class ProfileManager implements vscode.Disposable {
     async initialize(): Promise<void> {
         await this.ensureStorage();
         this.load();
+        this.synchronizeStorageFilesAfterLoad();
         await this.resolveActiveProfile(false);
         this.initialized = true;
         this.changeEmitter.fire();
@@ -270,33 +273,162 @@ export class ProfileManager implements vscode.Disposable {
 
     private async ensureStorage(): Promise<void> {
         await vscode.workspace.fs.createDirectory(this.context.globalStorageUri);
+        this.migrateLegacyStorageIfNeeded();
+        this.ensureStorageFilesExist();
+    }
+
+    private migrateLegacyStorageIfNeeded(): void {
+        const profilesPath = this.getProfilesPath();
+        const bindingsPath = this.getBindingsPath();
+
+        if (fs.existsSync(profilesPath)) {
+            return;
+        }
+
+        // 1) Migrate from legacy filenames inside current storage folder.
+        const localLegacyProfiles = this.findFirstExistingFile(
+            this.context.globalStorageUri.fsPath,
+            LEGACY_PROFILES_FILES
+        );
+        if (localLegacyProfiles) {
+            this.safeCopyFile(localLegacyProfiles, profilesPath);
+            const localLegacyBindings = this.findFirstExistingFile(
+                this.context.globalStorageUri.fsPath,
+                LEGACY_BINDINGS_FILES
+            );
+            if (localLegacyBindings && !fs.existsSync(bindingsPath)) {
+                this.safeCopyFile(localLegacyBindings, bindingsPath);
+            }
+            return;
+        }
+
+        // 2) Conservative sibling scan (older extension id storage folder).
+        const parentDir = path.dirname(this.context.globalStorageUri.fsPath);
+        if (!existsDir(parentDir)) {
+            return;
+        }
+
+        const siblingDirs = fs
+            .readdirSync(parentDir)
+            .map(name => path.join(parentDir, name))
+            .filter(full => full !== this.context.globalStorageUri.fsPath && existsDir(full));
+
+        const candidates = siblingDirs
+            .map(dir => ({
+                dir,
+                profiles:
+                    this.findFirstExistingFile(dir, [PROFILES_FILE]) ??
+                    this.findFirstExistingFile(dir, LEGACY_PROFILES_FILES),
+                bindings:
+                    this.findFirstExistingFile(dir, [BINDINGS_FILE]) ??
+                    this.findFirstExistingFile(dir, LEGACY_BINDINGS_FILES)
+            }))
+            .filter(entry => Boolean(entry.profiles));
+
+        if (candidates.length !== 1) {
+            return;
+        }
+
+        const [candidate] = candidates;
+        if (candidate.profiles) {
+            this.safeCopyFile(candidate.profiles, profilesPath);
+            if (candidate.bindings && !fs.existsSync(bindingsPath)) {
+                this.safeCopyFile(candidate.bindings, bindingsPath);
+            }
+            void vscode.window.showInformationMessage(
+                `Imported program profiles from legacy storage folder: ${path.basename(candidate.dir)}`
+            );
+        }
+    }
+
+    private ensureStorageFilesExist(): void {
+        const profilesPayload: ProfilesFileShape = { version: 1, profiles: [] };
+        const bindingsPayload: BindingsFileShape = { version: 1, bindings: {} };
+
+        const profileFiles = [
+            this.getProfilesPath(),
+            ...LEGACY_PROFILES_FILES.map(name => path.join(this.context.globalStorageUri.fsPath, name))
+        ];
+        for (const filePath of profileFiles) {
+            if (!fs.existsSync(filePath)) {
+                this.writeJsonFileWithError(filePath, profilesPayload, path.basename(filePath));
+            }
+        }
+
+        const bindingFiles = [
+            this.getBindingsPath(),
+            ...LEGACY_BINDINGS_FILES.map(name => path.join(this.context.globalStorageUri.fsPath, name))
+        ];
+        for (const filePath of bindingFiles) {
+            if (!fs.existsSync(filePath)) {
+                this.writeJsonFileWithError(filePath, bindingsPayload, path.basename(filePath));
+            }
+        }
+    }
+
+    private findFirstExistingFile(dir: string, names: string[]): string | undefined {
+        for (const name of names) {
+            const full = path.join(dir, name);
+            if (fs.existsSync(full)) {
+                return full;
+            }
+        }
+        return undefined;
+    }
+
+    private safeCopyFile(source: string, destination: string): void {
+        try {
+            fs.copyFileSync(source, destination);
+        } catch {}
+    }
+
+    private writeJsonFileWithError(filePath: string, payload: unknown, label: string): void {
+        try {
+            fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Could not persist ${label}: ${message}`);
+        }
     }
 
     private load(): void {
         this.profiles.clear();
         this.workspaceBindings.clear();
 
-        const profilesPath = this.getProfilesPath();
-        if (fs.existsSync(profilesPath)) {
+        const profilePaths = [
+            this.getProfilesPath(),
+            ...LEGACY_PROFILES_FILES.map(name => path.join(this.context.globalStorageUri.fsPath, name))
+        ];
+        for (const profilesPath of profilePaths) {
+            if (!fs.existsSync(profilesPath)) {
+                continue;
+            }
             const parsed = this.readJsonFile(profilesPath);
             const profiles = isJsonRecord(parsed) && Array.isArray(parsed.profiles) ? parsed.profiles : [];
             for (const entry of profiles) {
                 const normalized = this.normalizeProfileFromUnknown(entry);
-                if (!normalized) {
+                if (!normalized || this.profiles.has(normalized.id)) {
                     continue;
                 }
                 this.profiles.set(normalized.id, normalized);
             }
         }
 
-        const bindingsPath = this.getBindingsPath();
-        if (fs.existsSync(bindingsPath)) {
+        const bindingsPaths = [
+            this.getBindingsPath(),
+            ...LEGACY_BINDINGS_FILES.map(name => path.join(this.context.globalStorageUri.fsPath, name))
+        ];
+        for (const bindingsPath of bindingsPaths) {
+            if (!fs.existsSync(bindingsPath)) {
+                continue;
+            }
             const parsed = this.readJsonFile(bindingsPath);
             const bindings = isJsonRecord(parsed) ? asStringRecord(parsed.bindings) : {};
             for (const [workspacePath, profileId] of Object.entries(bindings)) {
-                if (workspacePath) {
-                    this.workspaceBindings.set(workspacePath, profileId);
+                if (!workspacePath || this.workspaceBindings.has(workspacePath)) {
+                    continue;
                 }
+                this.workspaceBindings.set(workspacePath, profileId);
             }
         }
     }
@@ -306,16 +438,25 @@ export class ProfileManager implements vscode.Disposable {
         this.persistBindings();
     }
 
+    private synchronizeStorageFilesAfterLoad(): void {
+        if (this.profiles.size === 0 && this.workspaceBindings.size === 0) {
+            return;
+        }
+        this.persist();
+    }
+
     private persistProfiles(): void {
         const payload: ProfilesFileShape = {
             version: 1,
             profiles: [...this.profiles.values()]
         };
-        try {
-            fs.writeFileSync(this.getProfilesPath(), JSON.stringify(payload, null, 2), 'utf8');
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            void vscode.window.showErrorMessage(`Could not persist profiles file: ${message}`);
+        this.writeJsonFileWithError(this.getProfilesPath(), payload, 'profiles file');
+        for (const legacyName of LEGACY_PROFILES_FILES) {
+            this.writeJsonFileWithError(
+                path.join(this.context.globalStorageUri.fsPath, legacyName),
+                payload,
+                `legacy profiles file (${legacyName})`
+            );
         }
     }
 
@@ -324,11 +465,13 @@ export class ProfileManager implements vscode.Disposable {
             version: 1,
             bindings: Object.fromEntries(this.workspaceBindings.entries())
         };
-        try {
-            fs.writeFileSync(this.getBindingsPath(), JSON.stringify(payload, null, 2), 'utf8');
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            void vscode.window.showErrorMessage(`Could not persist workspace bindings file: ${message}`);
+        this.writeJsonFileWithError(this.getBindingsPath(), payload, 'workspace bindings file');
+        for (const legacyName of LEGACY_BINDINGS_FILES) {
+            this.writeJsonFileWithError(
+                path.join(this.context.globalStorageUri.fsPath, legacyName),
+                payload,
+                `legacy bindings file (${legacyName})`
+            );
         }
     }
 
@@ -513,8 +656,8 @@ export class ProfileManager implements vscode.Disposable {
                 }
 
                 if (message.type === 'cancel') {
-                    panel.dispose();
                     finish(undefined);
+                    panel.dispose();
                     return;
                 }
 
@@ -541,8 +684,8 @@ export class ProfileManager implements vscode.Disposable {
                     }
                 }
 
-                panel.dispose();
                 finish(built.profile);
+                panel.dispose();
             });
 
             panel.onDidDispose(() => {

@@ -43,6 +43,11 @@
     {
      "id": "programInfo",
      "name": "Program Info"
+    },
+    {
+     "id": "csvDiffTool",
+     "name": "CSV DIFF TOOL",
+     "type": "webview"
     }
    ]
   },

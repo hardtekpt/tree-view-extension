@@ -9,14 +9,16 @@ export const VIEW_IDS = {
     srcExplorer: 'srcExplorer',
     scenarioExplorer: 'scenarioExplorer',
     configInspector: 'configInspector',
-    programInfo: 'programInfo'
+    programInfo: 'programInfo',
+    csvDiffTool: 'csvDiffTool'
 } as const;
 
 export const DEFAULTS = {
     pythonCommand: 'python',
     runCommandTemplate: 'run.py <scenario_name>',
     scenarioConfigsFolderName: 'configs',
-    scenarioIoFolderName: 'io'
+    scenarioIoFolderName: 'io',
+    csvDiffOutputPrefix: 'csv_diff'
 } as const;
 
 export const FOLDER_NAMES = {
@@ -49,6 +51,7 @@ export const VENV_PATHS = {
 export const MIME_TYPES = {
     srcTree: 'application/vnd.code.tree.srcExplorer',
     devTree: 'application/vnd.code.tree.dev',
+    scenarioTree: 'application/vnd.code.tree.scenarioExplorer',
     uriList: 'text/uri-list'
 } as const;
 

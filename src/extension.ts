@@ -3,6 +3,7 @@ import { getBasePath, getScenarioPath } from './config';
 import { TREE_COMMANDS, VIEW_IDS, WORKBENCH_COMMANDS } from './constants';
 import { registerCommands } from './commands/registerCommands';
 import { ConfigInspectorProvider } from './configInspector/configInspectorProvider';
+import { CsvDiffToolProvider } from './csvDiffTool/csvDiffToolProvider';
 import { createWatchers } from './extension/watchers';
 import { revealExpandedPaths } from './extension/treeReveal';
 import { initializeProfileManager } from './profile/profileManager';
@@ -22,6 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const scenarioProvider = new ScenarioProvider(context.workspaceState);
     const programInfoProvider = new ProgramInfoProvider(scenarioProvider, context.workspaceState);
     const configInspectorProvider = new ConfigInspectorProvider(context);
+    const csvDiffToolProvider = new CsvDiffToolProvider(handle => scenarioProvider.resolveTreeItemHandle(handle));
     const srcExpanded = new Set<string>();
     const scenarioExpanded = new Set<string>();
     let isApplyingTreeViewState = false;
@@ -43,7 +45,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const scenarioTree = vscode.window.createTreeView(VIEW_IDS.scenarioExplorer, {
         treeDataProvider: scenarioProvider,
-        showCollapseAll: true
+        showCollapseAll: true,
+        dragAndDropController: scenarioProvider
     });
     const programInfoTree = vscode.window.createTreeView(VIEW_IDS.programInfo, {
         treeDataProvider: programInfoProvider,
@@ -188,7 +191,8 @@ export function activate(context: vscode.ExtensionContext): void {
         programInfoTree,
         scenarioProvider,
         programInfoProvider,
-        vscode.window.registerWebviewViewProvider(VIEW_IDS.configInspector, configInspectorProvider)
+        vscode.window.registerWebviewViewProvider(VIEW_IDS.configInspector, configInspectorProvider),
+        vscode.window.registerWebviewViewProvider(VIEW_IDS.csvDiffTool, csvDiffToolProvider)
     );
 
     const watcherState = createWatchers(srcProvider.refresh.bind(srcProvider), scenarioProvider.refresh.bind(scenarioProvider));

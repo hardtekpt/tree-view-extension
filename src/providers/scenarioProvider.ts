@@ -10,7 +10,7 @@ import {
     getScenarioIoFolderName,
     getScenarioPath
 } from '../config';
-import { DEFAULTS, FILE_EXTENSIONS, FOLDER_NAMES, PYTHON_CONFIG_ROOT, PYTHON_DEFAULT_INTERPRETER_PATH_KEY } from '../constants';
+import { DEFAULTS, FILE_EXTENSIONS, FOLDER_NAMES, MIME_TYPES, PYTHON_CONFIG_ROOT, PYTHON_DEFAULT_INTERPRETER_PATH_KEY } from '../constants';
 import { ScenarioNode } from '../nodes/scenarioNode';
 import { existsDir, uniquePath, listEntriesSorted } from '../utils/fileSystem';
 import { toPathKey } from '../utils/pathKey';
@@ -75,7 +75,11 @@ export interface LastExecutionInfo {
 export type { ParsedOutputFileMetadata, ParsedOutputFolderMetadata };
 
 // Main provider for scenarios, run outputs, and run tagging workflows.
-export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
+export class ScenarioProvider
+    implements vscode.TreeDataProvider<ScenarioNode>, vscode.TreeDragAndDropController<ScenarioNode>
+{
+    readonly dragMimeTypes = [MIME_TYPES.uriList, MIME_TYPES.scenarioTree, 'text/plain'];
+    readonly dropMimeTypes: string[] = [];
     private readonly changeEmitter = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this.changeEmitter.event;
     private readonly lastExecutionEmitter = new vscode.EventEmitter<LastExecutionInfo | undefined>();
@@ -496,6 +500,45 @@ export class ScenarioProvider implements vscode.TreeDataProvider<ScenarioNode> {
 
     getTreeItem(element: ScenarioNode): vscode.TreeItem {
         return element;
+    }
+
+    resolveTreeItemHandle(handle: string): vscode.Uri | undefined {
+        const scenariosRoot = getScenarioPath();
+        if (!scenariosRoot || !existsDir(scenariosRoot)) {
+            return undefined;
+        }
+
+        const segments = handle
+            .split('/')
+            .map(part => {
+                const colonIndex = part.indexOf(':');
+                if (colonIndex < 0 || colonIndex === part.length - 1) {
+                    return '';
+                }
+                return part.slice(colonIndex + 1);
+            })
+            .filter(Boolean);
+
+        if (segments.length === 0) {
+            return undefined;
+        }
+
+        const fullPath = path.join(scenariosRoot, ...segments);
+        if (!fs.existsSync(fullPath)) {
+            return undefined;
+        }
+        return vscode.Uri.file(fullPath);
+    }
+
+    handleDrag(source: readonly ScenarioNode[], dataTransfer: vscode.DataTransfer): void {
+        const uris = source.map(node => node.uri.toString());
+        dataTransfer.set(MIME_TYPES.uriList, new vscode.DataTransferItem(uris.join('\r\n')));
+        dataTransfer.set(MIME_TYPES.scenarioTree, new vscode.DataTransferItem(JSON.stringify(uris)));
+        dataTransfer.set('text/plain', new vscode.DataTransferItem(uris[0] ?? ''));
+    }
+
+    async handleDrop(_target: ScenarioNode | undefined, _dataTransfer: vscode.DataTransfer): Promise<void> {
+        // Scenario tree does not currently support drop operations.
     }
 
     getParent(element: ScenarioNode): ScenarioNode | undefined {
